@@ -85,6 +85,11 @@ Rueckmeldungen/Fixes von macOS-Nutzern sind willkommen.
   (bei 99 % gedeckelt, da Menüs/kurze Titel nicht mitgerippt werden). Ist
   beides nicht verfügbar (z.B. unter macOS ohne `blockdev`-Äquivalent),
   läuft statt des Balkens ein Spinner mit denselben Detailzahlen.
+- **Serien-/Episoden-DVDs**: standardmäßig werden nur Titel ab 20 Minuten
+  gerippt, damit Menüs, Trailer und Logos wegfallen. Sind auf einer Disc
+  *alle* Titel kürzer (typisch für Episoden-DVDs), erkennt `dvd-auto` das,
+  sagt es und bietet einen passenden Wert an, statt einen Lesefehler zu
+  vermuten. Dauerhaft einstellbar über `DVD_TOOLS_MIN_TITLE_SECONDS`.
 - **Automatische Wiederherstellung bei zerkratzten/beschädigten Discs**
   (`dvd-auto`): erkennt haengende/fehlschlagende Rips (kein Datenzuwachs
   ueber laengere Zeit) und eskaliert automatisch in drei Stufen:
@@ -99,6 +104,12 @@ Rueckmeldungen/Fixes von macOS-Nutzern sind willkommen.
   Stufe 3 kann bei starker Beschaedigung deutlich laenger dauern als ein
   normaler Rip (im Extremfall Stunden statt Minuten) - ddrescues eigene,
   dafuer gebaute Live-Anzeige wird direkt durchgereicht.
+
+  Eskaliert wird nur bei **echten** Leseproblemen: wenn der Rip haengt oder
+  nach Teildaten abbricht. Schlägt er fehl, ohne dass ein einziges Byte
+  geschrieben wurde, ist die Ursache eine andere (Laufwerk belegt, Rechte,
+  alle Titel unter der Mindestlänge) — dann werden MakeMKVs Meldungen
+  angezeigt statt eine intakte Disc stundenlang zu imagen.
 
 ## Voraussetzungen
 

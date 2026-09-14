@@ -175,6 +175,33 @@ else
 fi
 unset -f tmdb_search wikidata_search
 
+# Der Ausloeser: eine Episoden-DVD (lauter ~220s-Titel) liess MakeMKV mit
+# --minlength=1200 jeden Titel ueberspringen. Der Rip meldete daraufhin
+# "Das Oeffnen der Disk schlug fehl", und die Eskalation deutete das als
+# Lesefehler und lief in ein minutenlanges ddrescue-Imaging einer voellig
+# intakten Disc. Ausgewertet wird der Meldungscode 3025 ueber seine
+# numerischen Parameter, weil der Klartext lokalisiert ist.
+echo "== MakeMKV-Logauswertung =="
+MKLOG="$(mktemp)"
+cat > "$MKLOG" <<'MKEOF'
+MSG:1005,0,1,"MakeMKV v1.18.4 gestartet","%1 gestartet","MakeMKV v1.18.4"
+MSG:3025,0,3,"Titel #1 hat eine Laenge von 220 Sekunden ...","Titel #%1 ... %2 ... %3","1","220","1200"
+MSG:3025,16777216,3,"Titel #2 hat eine Laenge von 226 Sekunden ...","Titel #%1 ... %2 ... %3","2","226","1200"
+MSG:3025,0,3,"Titel #3 hat eine Laenge von 217 Sekunden ...","Titel #%1 ... %2 ... %3","3","217","1200"
+MSG:5010,0,0,"Das Oeffnen der Disk schlug fehl ","Das Oeffnen der Disk schlug fehl "
+MKEOF
+assert_eq "laengster uebersprungener Titel wird erkannt" \
+  "226" "$(makemkv_longest_skipped_title "$MKLOG")"
+assert_contains "Fehlermeldung ab Code 5000 wird ausgegeben" \
+  "Das Oeffnen der Disk schlug fehl" "$(makemkv_error_lines "$MKLOG")"
+assert_eq "Meldungen unter Code 5000 gelten nicht als Fehler" \
+  "" "$(printf 'MSG:1005,0,1,"gestartet","%%1","x"\n' > "$MKLOG"; makemkv_error_lines "$MKLOG")"
+assert_eq "ohne 3025-Zeilen bleibt die Titellaenge leer" \
+  "" "$(makemkv_longest_skipped_title "$MKLOG")"
+assert_eq "fehlende Logdatei ergibt leere Ausgabe (kein Fehler)" \
+  "" "$(makemkv_longest_skipped_title /nicht/vorhanden)"
+rm -f "$MKLOG"
+
 echo
 echo "== Ergebnis: $PASS bestanden, $FAIL fehlgeschlagen =="
 [ "$FAIL" -eq 0 ]

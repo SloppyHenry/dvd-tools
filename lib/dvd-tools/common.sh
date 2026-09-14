@@ -15,7 +15,7 @@ DVD_TOOLS_CONFIG="${DVD_TOOLS_CONFIG:-$HOME/.config/dvd-tools/config}"
 [ -f "$DVD_TOOLS_CONFIG" ] && source "$DVD_TOOLS_CONFIG"
 
 _COMMON_SH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-for _f in platform ui naming quality metadata identify rip encode; do
+for _f in platform ui naming quality metadata identify rip recover encode; do
   # shellcheck source=/dev/null
   source "$_COMMON_SH_DIR/${_f}.sh"
 done

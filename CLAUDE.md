@@ -17,7 +17,8 @@ lib/dvd-tools/naming.sh         Namensschema, XML-Tagging
 lib/dvd-tools/quality.sh        CQ-Qualitaets-Heuristik
 lib/dvd-tools/metadata.sh       Filmdatenbanken (Wikidata ohne Key, TMDB mit Key)
 lib/dvd-tools/identify.sh       Disc-Label-Bereinigung, interaktive Titelwahl
-lib/dvd-tools/rip.sh            MakeMKV-Rip + Recovery-Eskalation (ddrescue)
+lib/dvd-tools/rip.sh            MakeMKV-Rip mit Live-Fortschritt
+lib/dvd-tools/recover.sh        Fehlerdiagnose + Eskalation (Drosselung, ddrescue)
 lib/dvd-tools/encode.sh         HandBrake-Encode
 install.sh                      installiert Abhaengigkeiten (apt/brew) + die Tools
 tests/                          Regressionstests fuer die riskantesten Funktionen

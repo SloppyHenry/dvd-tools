@@ -6,6 +6,12 @@
 # der tatsaechlich gemessenen Lesegeschwindigkeit (1x DVD = 1.32 MB/s).
 DVD_1X_BYTES_PER_SEC=1384448
 
+# Titel unterhalb dieser Laenge ueberspringt MakeMKV (Menues, Trailer,
+# Logos). 20 Minuten passen fuer Spielfilme; Serien-/Episoden-DVDs haben
+# aber oft nur 3-5 Minuten lange Titel und blieben damit komplett leer -
+# rip_main_feature erkennt diesen Fall und bietet einen kleineren Wert an.
+DVD_TOOLS_MIN_TITLE_SECONDS="${DVD_TOOLS_MIN_TITLE_SECONDS:-1200}"
+
 # Letzte lesbare Statuszeile aus dem robot-mode-Log (PRGC- oder MSG-Text).
 # Gibt den Text ungekappt zurueck - auf die Terminalbreite kappt erst die
 # Anzeige selbst (progress_bar/spinner_line), damit die Zahlenspalten davor
@@ -63,12 +69,14 @@ expected_rip_bytes() {
 # Zeigt IMMER etwas an (Spinner+Status+Speed sobald Daten fliessen),
 # unabhaengig davon, ob MakeMKV ueberhaupt PRGV-Prozentzeilen liefert -
 # manche Versionen tun das beim "mkv"-Befehl nicht.
+# shellcheck disable=SC2034  # MAKEMKV_LAST_LOG wird von recover.sh ausgewertet
 makemkv_rip() {
   local source="$1" rip_dir="$2" stall_timeout="${3:-0}" drive="${4:-}"
   local log; log="$(mktemp)"
   local expected; expected="$(expected_rip_bytes "$source" "$drive")"
   [[ "$expected" =~ ^[0-9]+$ ]] || expected=0
-  run_unbuffered makemkvcon -r --minlength=1200 mkv "$source" all "$rip_dir" \
+  run_unbuffered makemkvcon -r "--minlength=$DVD_TOOLS_MIN_TITLE_SECONDS" \
+    mkv "$source" all "$rip_dir" \
     > "$log" 2>&1 &
   local pid=$!
 
@@ -104,7 +112,7 @@ makemkv_rip() {
       kill "$pid" 2>/dev/null
       wait "$pid" 2>/dev/null
       progress_done
-      rm -f "$log"
+      MAKEMKV_LAST_LOG="$log"
       return 124
     fi
 
@@ -152,87 +160,12 @@ makemkv_rip() {
 
   wait "$pid"
   local rc=$?
-  rm -f "$log"
+  # Bei Erfolg wird das Log nicht mehr gebraucht; im Fehlerfall bleibt es
+  # liegen, damit der Aufrufer die MakeMKV-Meldungen auswerten und dem
+  # Nutzer zeigen kann, statt nur "ging nicht" zu melden.
+  MAKEMKV_LAST_LOG="$log"
+  [ "$rc" -eq 0 ] && { rm -f "$log"; MAKEMKV_LAST_LOG=""; }
   return $rc
-}
-
-# set_drive_speed DEVICE SPEED_X -> drosselt die Laufwerksgeschwindigkeit
-# (best effort, manche Laufwerke/Kernel unterstuetzen das nicht - dann wird
-# einfach ignoriert, kein harter Fehler).
-set_drive_speed() {
-  local drive="$1" speed="$2"
-  # Unter macOS gibt es kein Aequivalent zu "eject -x" (Laufwerks-
-  # Geschwindigkeit drosseln) - rip_main_feature ueberspringt die
-  # entsprechende Eskalationsstufe dort daher komplett.
-  is_macos && return 1
-  eject -x "$speed" "$drive" >/dev/null 2>&1
-}
-
-# rescue_image_disc DEVICE ISO_PATH -> zweistufiges ddrescue-Imaging
-# (1. schnell, ueberspringt kaputte Stellen  2. gezielte Retries nur auf
-# den kaputten Stellen). Laesst ddrescues eigene, dafuer gebaute
-# Live-Anzeige direkt durch (nicht selbst nachgebaut). Kann bei stark
-# beschaedigten Discs deutlich laenger dauern als ein normaler Rip.
-rescue_image_disc() {
-  local drive="$1" iso="$2"
-  local mapfile="${iso}.map"
-  need ddrescue
-
-  substep "ddrescue Durchlauf 1/2 (schnell, ueberspringt kaputte Stellen)..."
-  ddrescue -n -b 2048 "$drive" "$iso" "$mapfile"
-
-  substep "ddrescue Durchlauf 2/2 (gezielte Retries nur auf den kaputten Stellen - kann dauern)..."
-  ddrescue -d -r3 -b 2048 "$drive" "$iso" "$mapfile"
-
-  if command -v ddrescuelog >/dev/null 2>&1; then
-    info "ddrescue-Zusammenfassung:"
-    ddrescuelog -t "$mapfile" 2>/dev/null | sed 's/^/  /'
-  fi
-
-  [ -s "$iso" ]
-}
-
-# rip_main_feature MK_INDEX DRIVE RIP_DIR -> rippt mit dreistufiger
-# Eskalation bei Lesefehlern/Haengern:
-#   1. normale Geschwindigkeit
-#   2. gedrosselte Geschwindigkeit (4x)
-#   3. ddrescue-Image + Rip aus dem Image
-# Rueckgabewert 0 bei Erfolg, ungleich 0 wenn alle Stufen fehlschlagen.
-rip_main_feature() {
-  local mk_index="$1" drive="$2" rip_dir="$3"
-
-  if makemkv_rip "disc:$mk_index" "$rip_dir" 240 "$drive"; then
-    return 0
-  fi
-  warn "Rippen haengt oder schlaegt fehl (vermutlich Lesefehler)."
-
-  if is_macos; then
-    info "Geschwindigkeitsdrosselung gibt es unter macOS nicht - ueberspringe diese Stufe."
-  else
-    warn "Versuche mit gedrosselter Geschwindigkeit (4x)..."
-    find "$rip_dir" -mindepth 1 -delete 2>/dev/null
-    set_drive_speed "$drive" 4
-    sleep 2
-
-    if makemkv_rip "disc:$mk_index" "$rip_dir" 300 "$drive"; then
-      ok "Rip bei gedrosselter Geschwindigkeit erfolgreich."
-      set_drive_speed "$drive" 0
-      return 0
-    fi
-    set_drive_speed "$drive" 0
-  fi
-  warn "Weiterhin Leseprobleme - wechsle auf ddrescue-Imaging."
-  warn "Das kann bei stark beschaedigten Discs deutlich laenger dauern (im Extremfall Stunden statt Minuten)."
-  find "$rip_dir" -mindepth 1 -delete 2>/dev/null
-
-  local iso; iso="$(dirname "$rip_dir")/rescue.iso"
-  if ! rescue_image_disc "$drive" "$iso"; then
-    err "ddrescue konnte kein brauchbares Disc-Image erstellen."
-    return 1
-  fi
-  ok "Disc-Image erstellt ($(du -h "$iso" 2>/dev/null | cut -f1)), rippe nun aus dem Image..."
-
-  makemkv_rip "iso:$iso" "$rip_dir" 0
 }
 
 # run_unbuffered CMD... -> erzwingt Zeilenpufferung, sonst puffern

@@ -88,3 +88,16 @@ wird bei 99 % gedeckelt. Exakt wäre er nur mit einem vorgeschalteten
 `makemkvcon -r info`-Scan, der pro Lauf zusätzliche Disc-Zeit kostet; das
 wäre den Gewinn an Genauigkeit nicht wert. Unter macOS gibt es kein
 `blockdev`-Äquivalent, dort läuft bei `disc:`-Quellen weiterhin der Spinner.
+
+## Automatischer Mindestlängen-Vorschlag ist eine Heuristik
+
+**Priorität: niedrig**
+
+Überspringt MakeMKV jeden Titel wegen `--minlength`, schlägt `dvd-auto`
+"längster gefundener Titel minus 60 Sekunden" als neuen Wert vor. Das
+erfasst gleich lange Geschwister-Titel (Episoden einer Serie) zuverlässig,
+ist aber geraten: bei einer Disc mit einem langen Hauptfilm und vielen
+kurzen Extras würde derselbe Wert auch die Extras mitrippen. Der Nutzer
+bestätigt den Vorschlag, und die grösste Datei wird ohnehin als Hauptfilm
+gewählt — der Schaden bleibt also auf Plattenplatz im temporären
+Rip-Verzeichnis beschränkt.

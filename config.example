@@ -16,3 +16,12 @@ DVD_TOOLS_METADATA_PROVIDER="auto"
 # Erkennung ueber Wikidata. Kostenlos erhaeltlich unter:
 # https://www.themoviedb.org/settings/api
 TMDB_API_KEY=""
+
+# --- Rippen -----------------------------------------------------------
+# Titel, die kuerzer sind als dieser Wert (Sekunden), ueberspringt MakeMKV
+# beim Rippen - so fallen Menues, Trailer und Logos weg. 1200 (20 Minuten)
+# passt fuer Spielfilme. Serien-/Episoden-DVDs haben oft nur 3-5 Minuten
+# lange Titel; dort ist z.B. 120 sinnvoll. dvd-auto erkennt den Fall, dass
+# ALLE Titel zu kurz sind, und bietet dann von sich aus einen passenden
+# Wert an - dauerhaft einstellen laesst er sich hier.
+#DVD_TOOLS_MIN_TITLE_SECONDS="1200"
