@@ -15,7 +15,8 @@ lib/dvd-tools/ui.sh             Darstellungsschicht: Farben/Glyphen, Rahmen, Sch
                                 Prompts, Fortschrittsbalken/Spinner, Groessenformate
 lib/dvd-tools/naming.sh         Namensschema, XML-Tagging
 lib/dvd-tools/quality.sh        CQ-Qualitaets-Heuristik
-lib/dvd-tools/identify.sh       Disc-Label-Bereinigung, TMDB-Suche
+lib/dvd-tools/metadata.sh       Filmdatenbanken (Wikidata ohne Key, TMDB mit Key)
+lib/dvd-tools/identify.sh       Disc-Label-Bereinigung, interaktive Titelwahl
 lib/dvd-tools/rip.sh            MakeMKV-Rip + Recovery-Eskalation (ddrescue)
 lib/dvd-tools/encode.sh         HandBrake-Encode
 install.sh                      installiert Abhaengigkeiten (apt/brew) + die Tools
@@ -53,6 +54,11 @@ Kein echter Disc-Zugriff nötig, um die Steuerlogik zu verifizieren.
   `common.sh` kapseln (`is_macos`, `now_seconds`, `resolve_path`,
   `file_size_bytes`, `dir_size_bytes`, `eject_disc`, `run_unbuffered`) statt
   `date`/`readlink`/`stat`/`du`/`stdbuf` direkt mit GNU-Flags aufzurufen.
+- Titelerkennung nie direkt gegen einen Anbieter programmieren, sondern
+  ueber `movie_search` (in `metadata.sh`). Ein neuer Anbieter ist eine
+  Funktion, die Zeilen `tmdb_id \t titel \t jahr \t laufzeit` ausgibt, plus
+  ein Zweig in `movie_search`. Die TMDB-ID muss dabei bleiben — ohne sie
+  passt das Ergebnis nicht ins Namensschema.
 - Encoder-Wahl ist immer dynamisch (`pick_hevc_encoder`) — nie einen
   Encoder-Namen hartkodieren, auch nicht testweise.
 - **Jede** Terminalausgabe läuft über `ui.sh`, nie über nacktes `echo`/`printf`

@@ -123,6 +123,58 @@ assert_eq "voller Pfad wird durch Ellipse ersetzt" \
   "Saving 1 titles into directory …" "$(latest_status "$STATUS_LOG")"
 rm -f "$STATUS_LOG"
 
+echo "== label_is_generic =="
+for l in "DVD_VIDEO" "B1_T00" "LOGICAL_VOLUME_ID" "UNTITLED" "12345" "X"; do
+  if label_is_generic "$l"; then
+    PASS=$((PASS + 1)); echo "  ok  - \"$l\" gilt als nichtssagend"
+  else
+    FAIL=$((FAIL + 1)); echo "  FAIL - \"$l\" haette als nichtssagend gelten muessen"
+  fi
+done
+for l in "THE_GREEN_MILE" "ZIEMLICH_BESTE_FREUNDE" "DAS.LEBEN.DES.BRIAN"; do
+  if label_is_generic "$l"; then
+    FAIL=$((FAIL + 1)); echo "  FAIL - \"$l\" faelschlich als nichtssagend eingestuft"
+  else
+    PASS=$((PASS + 1)); echo "  ok  - \"$l\" wird gesucht"
+  fi
+done
+
+# Die Anbieterwahl wird mit gefaelschten Suchfunktionen geprueft, damit die
+# Tests ohne Netzwerk laufen (CI hat keinen garantierten Zugang und die
+# Fremd-APIs sollen nicht bei jedem Commit angefragt werden).
+echo "== movie_search waehlt den richtigen Anbieter =="
+tmdb_search()     { [ -n "$FAKE_TMDB" ] && printf '%s\n' "$FAKE_TMDB"; }
+wikidata_search() { [ -n "$FAKE_WIKIDATA" ] && printf '%s\n' "$FAKE_WIKIDATA"; }
+FAKE_TMDB=""; FAKE_WIKIDATA=""
+
+FAKE_TMDB="$(printf '497\tThe Green Mile\t1999\t')"
+FAKE_WIKIDATA="$(printf '497\tThe Green Mile\t1999\t189')"
+TMDB_API_KEY="dummy" DVD_TOOLS_METADATA_PROVIDER=auto movie_search "x"
+assert_eq "mit Key wird TMDB bevorzugt" "TMDB" "$MOVIE_SEARCH_PROVIDER"
+
+TMDB_API_KEY="" DVD_TOOLS_METADATA_PROVIDER=auto movie_search "x"
+assert_eq "ohne Key wird Wikidata benutzt" "Wikidata" "$MOVIE_SEARCH_PROVIDER"
+assert_eq "Wikidata-Zeile enthaelt die Laufzeit" "189" "$(cut -f4 <<<"${MOVIE_CANDIDATES[0]}")"
+
+FAKE_TMDB=""
+TMDB_API_KEY="dummy" DVD_TOOLS_METADATA_PROVIDER=auto movie_search "x"
+assert_eq "leeres TMDB-Ergebnis faellt auf Wikidata zurueck" "Wikidata" "$MOVIE_SEARCH_PROVIDER"
+
+FAKE_WIKIDATA=""
+if TMDB_API_KEY="" DVD_TOOLS_METADATA_PROVIDER=auto movie_search "x"; then
+  FAIL=$((FAIL + 1)); echo "  FAIL - movie_search haette ohne Treffer fehlschlagen muessen"
+else
+  PASS=$((PASS + 1)); echo "  ok  - ohne Treffer Rueckgabewert ungleich 0"
+fi
+
+FAKE_WIKIDATA="$(printf '1\tEgal\t2000\t90')"
+if DVD_TOOLS_METADATA_PROVIDER=off movie_search "x"; then
+  FAIL=$((FAIL + 1)); echo "  FAIL - Anbieter \"off\" haette nicht suchen duerfen"
+else
+  PASS=$((PASS + 1)); echo "  ok  - Anbieter \"off\" schaltet die Suche ab"
+fi
+unset -f tmdb_search wikidata_search
+
 echo
 echo "== Ergebnis: $PASS bestanden, $FAIL fehlgeschlagen =="
 [ "$FAIL" -eq 0 ]

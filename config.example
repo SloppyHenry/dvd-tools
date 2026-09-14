@@ -1,5 +1,18 @@
 # Kopieren nach ~/.config/dvd-tools/config
-#
-# TMDB-API-Key fuer die automatische Titelerkennung in dvd-auto.
-# Kostenlos erhaeltlich unter: https://www.themoviedb.org/settings/api
+
+# --- Titelerkennung ---------------------------------------------------
+# Welche Filmdatenbank dvd-auto fuer die automatische Titelerkennung
+# befragt:
+#   auto      (Vorgabe) TMDB, falls unten ein Key steht, sonst Wikidata.
+#             Liefert TMDB keine Treffer, wird zusaetzlich Wikidata
+#             versucht - die Datenbasen decken sich nicht vollstaendig.
+#   wikidata  immer Wikidata. Braucht keinerlei Anmeldung und liefert die
+#             TMDB-ID trotzdem mit (Wikidata fuehrt sie als Eigenschaft).
+#   tmdb      immer TMDB (nur sinnvoll mit Key).
+#   off       keine Online-Suche, es wird immer von Hand gefragt.
+DVD_TOOLS_METADATA_PROVIDER="auto"
+
+# Optionaler TMDB-API-Key. Wird NICHT benoetigt - ohne Key laeuft die
+# Erkennung ueber Wikidata. Kostenlos erhaeltlich unter:
+# https://www.themoviedb.org/settings/api
 TMDB_API_KEY=""

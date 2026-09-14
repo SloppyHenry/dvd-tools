@@ -13,28 +13,6 @@ print(s.title() if s.isupper() else s)
 "
 }
 
-# tmdb_search QUERY -> Zeilen "id\ttitle\tyear", leer wenn kein TMDB_API_KEY gesetzt ist
-tmdb_search() {
-  local query="$1"
-  [ -z "${TMDB_API_KEY:-}" ] && return 1
-  curl -fsS --get "https://api.themoviedb.org/3/search/movie" \
-    --data-urlencode "api_key=$TMDB_API_KEY" \
-    --data-urlencode "query=$query" \
-    --data-urlencode "language=de-DE" 2>/dev/null \
-  | python3 -c '
-import json, sys
-try:
-    d = json.load(sys.stdin)
-except Exception:
-    sys.exit(1)
-for r in d.get("results", [])[:8]:
-    year = (r.get("release_date") or "")[:4]
-    title = (r.get("title") or "").replace("\t", " ")
-    mid = r["id"]
-    print(f"{mid}\t{title}\t{year}")
-'
-}
-
 # similarity A B -> Aehnlichkeit 0.000-1.000
 similarity() {
   python3 - "$1" "$2" <<'PY'
@@ -52,16 +30,18 @@ identify_from_label() {
   local guess; guess="$(clean_disc_label "$label")"
   TITLE=""; YEAR=""; TMDBID=""
 
-  if [ -z "${TMDB_API_KEY:-}" ]; then
-    warn "Keine TMDB_API_KEY gesetzt (siehe README) - automatische Erkennung uebersprungen."
-    ask TITLE "Filmtitel" "$guess"
+  if label_is_generic "$label"; then
+    info "Disc-Label \"$label\" ist nichtssagend - Online-Suche uebersprungen."
+    ask TITLE "Filmtitel"
     ask YEAR "Erscheinungsjahr (optional)"
     ask TMDBID "TMDB-ID (optional)"
     return
   fi
 
-  substep "Suche \"$guess\" bei TMDB ..."
-  mapfile -t CANDIDATES < <(tmdb_search "$guess")
+  substep "Suche \"$guess\" ..."
+  movie_search "$guess"
+  local -a CANDIDATES=("${MOVIE_CANDIDATES[@]}")
+  local provider="${MOVIE_SEARCH_PROVIDER:-}"
 
   if [ "${#CANDIDATES[@]}" -gt 0 ]; then
     local top_id top_title top_year sim
@@ -71,7 +51,7 @@ identify_from_label() {
     sim="$(similarity "$guess" "$top_title")"
 
     if python3 -c "import sys; sys.exit(0 if float(sys.argv[1]) >= 0.72 else 1)" "$sim"; then
-      ok "Erkannt: $top_title ($top_year) [tmdbid-$top_id]"
+      ok "Erkannt: $top_title ($top_year) [tmdbid-$top_id]${provider:+  (Quelle: $provider)}"
       # Hier ist Ja die Vorgabe (anders als bei confirm()): der Treffer gilt
       # als sicher genug, Enter soll ihn uebernehmen.
       printf ' %s%s%s Uebernehmen? %s[J/n]%s ' \
@@ -85,10 +65,15 @@ identify_from_label() {
   fi
 
   if [ "${#CANDIDATES[@]}" -gt 0 ]; then
-    warn "Unsicher - mehrere moegliche Treffer fuer \"$guess\":"
+    warn "Unsicher - mehrere moegliche Treffer fuer \"$guess\"${provider:+ (Quelle: $provider)}:"
     for i in "${!CANDIDATES[@]}"; do
+      # Laufzeit mit anzeigen, sofern bekannt: sie unterscheidet Hauptfilm,
+      # Kurzfilm und Dokumentation oft zuverlaessiger als der Titel allein.
+      local c_year c_dur
+      c_year="$(cut -f3 <<<"${CANDIDATES[$i]}")"
+      c_dur="$(cut -f4 <<<"${CANDIDATES[$i]}")"
       menu_item "$((i+1))" "$(cut -f2 <<<"${CANDIDATES[$i]}")" \
-        "$(cut -f3 <<<"${CANDIDATES[$i]}")"
+        "$(printf '%-6s%s' "$c_year" "${c_dur:+${c_dur} min}")"
     done
     menu_item "0" "Manuell eingeben"
     echo
@@ -99,7 +84,7 @@ identify_from_label() {
       return
     fi
   else
-    warn "Keine TMDB-Treffer fuer \"$guess\"."
+    warn "Keine Treffer fuer \"$guess\"."
   fi
 
   ask TITLE "Filmtitel" "$guess"

@@ -11,8 +11,9 @@ Zwei Werkzeuge:
 - **`dvd-shrink`** — nimmt einen bereits vorhandenen DVD-MKV-Rip, komprimiert
   ihn per Hardware-HEVC-Encoding und legt ihn sauber benannt/getaggt ab.
 - **`dvd-auto`** — Komplettpipeline: DVD einlegen, wird automatisch erkannt,
-  MakeMKV rippt den Hauptfilm, der Titel wird per TMDB anhand des
-  Disc-Labels erraten, danach automatischer Hardware-Encode + Tagging.
+  MakeMKV rippt den Hauptfilm, der Titel wird anhand des Disc-Labels in
+  einer Filmdatenbank nachgeschlagen (ohne API-Key), danach automatischer
+  Hardware-Encode + Tagging.
 
 ## Plattformunterschiede
 
@@ -47,11 +48,16 @@ Rueckmeldungen/Fixes von macOS-Nutzern sind willkommen.
   ruhige Quellen einen höheren (kleineren)
 - **Verlustfreie Ton-/Untertitel-Übernahme**: alle Spuren werden 1:1 kopiert
   (kein Re-Encode), nichts geht verloren
-- **Automatische Titelerkennung** (`dvd-auto`): liest das Disc-Label,
-  bereinigt es und sucht bei [TMDB](https://www.themoviedb.org/) danach.
-  Bei eindeutigem Treffer wird automatisch übernommen (mit Bestätigung),
-  bei Unsicherheit bekommst du eine Auswahlliste plus die Option, den
-  Titel manuell einzugeben.
+- **Automatische Titelerkennung ohne Anmeldung** (`dvd-auto`): liest das
+  Disc-Label, bereinigt es und sucht damit in einer Filmdatenbank.
+  Standardmäßig läuft das über [Wikidata](https://www.wikidata.org) — **kein
+  API-Key, keine Registrierung nötig**. Wikidata führt die TMDB-ID als
+  eigenes Datenfeld, das Ergebnis passt also weiterhin ins
+  Namensschema. Bei eindeutigem Treffer wird automatisch übernommen (mit
+  Bestätigung), bei Unsicherheit gibt es eine Auswahlliste mit Jahr und
+  Laufzeit plus die Option, den Titel manuell einzugeben. Nichtssagende
+  Labels (`DVD_VIDEO`, `B1_T00` …) werden erkannt und gar nicht erst
+  gesucht. Details und Alternativen: [Titelerkennung](#titelerkennung).
 - **Sauberes Medienserver-Namensschema**:
   ```
   Titel (Jahr) [tmdbid-ID]/Titel (Jahr) [tmdbid-ID].mkv
@@ -109,8 +115,8 @@ Ohne `apt`/`brew` (andere Systeme) manuell benötigt:
 - `mkvpropedit`, `mkvmerge` (Paket `mkvtoolnix`)
 - `ffprobe` (Paket `ffmpeg`)
 - `python3` (nur Standardbibliothek)
-- Für `dvd-auto` zusätzlich: `makemkvcon` (siehe unten), `eject`, `blkid`,
-  `curl`
+- Für `dvd-auto` zusätzlich: `makemkvcon` (siehe unten), `eject`, `curl`
+  (nur für TMDB; die Wikidata-Erkennung nutzt Pythons Standardbibliothek)
 
 ## Installation
 
@@ -150,20 +156,45 @@ nötig), `makemkv-bin` als offizielles Binärpaket installiert. MakeMKV ist
 kostenlos in der Beta-Phase nutzbar (rollierender Beta-Key) bzw. mit einer
 gekauften Lizenz.
 
-### Optional: automatische Titelerkennung einrichten
+### Titelerkennung
 
-`dvd-auto` kann Filmtitel automatisch anhand des Disc-Labels erkennen. Dafür
-wird ein kostenloser [TMDB-API-Key](https://www.themoviedb.org/settings/api)
-benötigt:
+`dvd-auto` liest das Label der eingelegten DVD (z.B. `THE_GREEN_MILE`),
+räumt es auf und sucht damit in einer Filmdatenbank. **Ohne jede
+Einrichtung** läuft das über [Wikidata](https://www.wikidata.org):
+
+| | Wikidata (Vorgabe) | TMDB |
+|---|---|---|
+| API-Key nötig | nein | ja (kostenlos) |
+| liefert TMDB-ID | ja (Eigenschaft P4947) | ja |
+| liefert Laufzeit | ja | nein |
+| Datenbasis | sehr gut bei Kinofilmen | umfassender, aktueller |
+
+Warum das auch bei entstellten Labels funktioniert: DVD-Labels dürfen keine
+Umlaute oder Satzzeichen enthalten. Die Suche ist deshalb fehlertolerant
+ausgelegt — aus `DER_HERR_DER_RINGE_DIE_GEFAEHRTEN` wird zuverlässig
+*Der Herr der Ringe: Die Gefährten*. Nichtssagende Labels (`DVD_VIDEO`,
+`B1_T00`, `LOGICAL_VOLUME_ID` …) werden als solche erkannt; dann wird gar
+nicht erst gesucht, sondern direkt nachgefragt.
+
+Umstellen lässt sich der Anbieter in `~/.config/dvd-tools/config`:
 
 ```bash
 mkdir -p ~/.config/dvd-tools
 cp config.example ~/.config/dvd-tools/config
-# TMDB_API_KEY="..." in der Datei eintragen
 ```
 
-Ohne API-Key funktioniert `dvd-auto` weiterhin, fragt dann aber immer nach
-Titel/Jahr/TMDB-ID von Hand (mit dem bereinigten Disc-Label als Vorschlag).
+```bash
+DVD_TOOLS_METADATA_PROVIDER="auto"   # auto | wikidata | tmdb | off
+TMDB_API_KEY=""                      # optional, siehe unten
+```
+
+`auto` nimmt TMDB, sobald ein Key eingetragen ist, und sonst Wikidata —
+liefert TMDB nichts, wird zusätzlich Wikidata versucht. `off` schaltet die
+Online-Suche ganz ab und fragt immer von Hand (mit dem bereinigten
+Disc-Label als Vorschlag).
+
+Einen kostenlosen TMDB-Key gibt es unter
+<https://www.themoviedb.org/settings/api> — nötig ist er nicht.
 
 ## Verwendung
 

@@ -19,23 +19,39 @@ MakeMKV-Cask-Bundles sind nicht verifiziert.
 
 → Sollte vor echter Nutzung einmal auf einem Mac durchlaufen werden.
 
-## Kein TMDB-Rate-Limit-Handling
+## Kein Rate-Limit-Handling bei den Filmdatenbanken
 
 **Priorität: niedrig**
 
-`tmdb_search` behandelt HTTP-429-Antworten (Rate Limit) nicht gesondert —
-ein fehlgeschlagener Request führt einfach zum Fallback auf manuelle
-Eingabe. Für die erwartete Nutzung (ein Nutzer, gelegentliche Anfragen)
-unkritisch.
+Weder `tmdb_search` noch `wikidata_search` behandeln HTTP-429-Antworten
+(Rate Limit) gesondert — ein fehlgeschlagener Request führt einfach zum
+nächsten Anbieter bzw. zur manuellen Eingabe. Für die erwartete Nutzung
+(ein Nutzer, ein paar Anfragen pro Tag) unkritisch; Wikimedia bittet bei
+automatisierten Zugriffen um einen aussagekräftigen User-Agent, den setzt
+`DVD_TOOLS_USER_AGENT` bereits.
 
-## Kein Timeout auf den TMDB-Request selbst
+## Laufzeit wird angezeigt, aber nicht automatisch abgeglichen
 
 **Priorität: niedrig**
 
-`curl` in `tmdb_search` hat kein explizites `--max-time`. Bei einem hängenden
-Netzwerk würde `dvd-auto` an dieser Stelle unbegrenzt warten. Für ein
-interaktives Ein-Personen-Tool akzeptabel (Ctrl-C jederzeit möglich), wäre
-aber eine einfache Verbesserung.
+Wikidata liefert zu jedem Treffer die Laufzeit mit, und in der
+Kandidatenliste hilft sie dem Nutzer beim Unterscheiden (Hauptfilm vs.
+Kurzfilm vs. Dokumentation). Automatisch gegen die tatsächliche Länge des
+Titels auf der Disc geprüft wird sie nicht — dafür müsste `dvd-auto` vor
+dem Rippen ein `makemkvcon -r info` laufen lassen, was einen zusätzlichen
+Disc-Scan von etwa einer Minute kostet. Das wäre der nächste sinnvolle
+Ausbau, falls sich Fehlerkennungen häufen.
+
+## Wikidata-Abdeckung ist nicht überall gleich gut
+
+**Priorität: niedrig**
+
+Bei Kinofilmen ist Wikidata sehr vollständig (inklusive TMDB-ID). Bei sehr
+alten, regionalen oder direkt auf Video veröffentlichten Titeln fehlen
+teilweise die TMDB-ID (P4947) oder das Erscheinungsjahr (P577) — dann
+bleibt der entsprechende Teil des Ordnernamens einfach leer, was das
+Namensschema bereits vorsieht. Wer die dichtere Datenbasis braucht, trägt
+einen TMDB-Key ein.
 
 ## ddrescue-Eskalationsstufe nur mit simulierten Tools getestet
 
