@@ -263,7 +263,7 @@ identify_from_label() {
 # encode_to_hevc IN OUT QUALITY
 encode_to_hevc() {
   local in="$1" out="$2" quality="$3"
-  HandBrakeCLI \
+  stdbuf -oL -eL HandBrakeCLI \
     -i "$in" \
     -o "$out" \
     -f av_mkv \

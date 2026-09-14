@@ -18,7 +18,7 @@ need ffprobe
 need python3
 need eject
 
-makemkv() { makemkvcon "$@"; }
+makemkv() { stdbuf -oL -eL makemkvcon "$@"; }
 
 # Listet aktive optische Laufwerke: "index\tdevice\tlabel"
 list_drives() {
