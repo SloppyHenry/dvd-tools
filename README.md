@@ -4,17 +4,43 @@ Kleine CLI-Toolsammlung, um DVD-Rips (MKV) verlustarm zu verkleinern und/oder
 DVDs direkt von der Disc weg zu rippen, zu komprimieren und sauber benannt in
 eine Mediathek (Jellyfin/Plex/Radarr-kompatibel) abzulegen.
 
+Laeuft unter **Linux (Debian/Ubuntu)** und **macOS**.
+
 Zwei Werkzeuge:
 
 - **`dvd-shrink`** — nimmt einen bereits vorhandenen DVD-MKV-Rip, komprimiert
-  ihn per NVIDIA NVENC (HEVC) und legt ihn sauber benannt/getaggt ab.
+  ihn per Hardware-HEVC-Encoding und legt ihn sauber benannt/getaggt ab.
 - **`dvd-auto`** — Komplettpipeline: DVD einlegen, wird automatisch erkannt,
   MakeMKV rippt den Hauptfilm, der Titel wird per TMDB anhand des
-  Disc-Labels erraten, danach automatischer NVENC-Encode + Tagging.
+  Disc-Labels erraten, danach automatischer Hardware-Encode + Tagging.
+
+## Plattformunterschiede
+
+dvd-tools erkennt bei jedem Lauf selbst, welche Plattform/Hardware
+vorliegt (siehe [Automatische GPU-/Encoder-Erkennung](#automatische-gpu--encoder-erkennung)
+und [Automatische Wiederherstellung](#features) unten). Zwei Punkte gibt
+es unter macOS nicht, weil es dafuer kein Betriebssystem-Aequivalent gibt:
+
+| Feature | Linux | macOS |
+|---|---|---|
+| Hardware-Encoder | NVENC / QSV / VCE (je nach GPU) | VideoToolbox |
+| Disc auswerfen | `eject` | `drutil`/`diskutil` |
+| Lesegeschwindigkeit drosseln (Recovery Stufe 2) | ja (`eject -x`) | nein, wird uebersprungen |
+| MakeMKV-Installation | aus Quellcode gebaut | Homebrew Cask |
+
+**Hinweis:** Diese macOS-Unterstuetzung wurde ohne Zugriff auf ein
+tatsaechliches macOS-System entwickelt (nach bestem Wissen ueber
+Homebrew-Paketnamen, BSD-Userland-Unterschiede und MakeMKVs Mac-Vertrieb).
+Rueckmeldungen/Fixes von macOS-Nutzern sind willkommen.
 
 ## Features
 
-- **GPU-beschleunigtes Encoding** via NVIDIA NVENC (HEVC/H.265)
+- **Automatische GPU-/Encoder-Erkennung**: prüft bei jedem Lauf live, welche
+  Hardware-HEVC-Encoder die installierte HandBrakeCLI tatsächlich mitbringt
+  und welche GPU vorhanden ist (NVIDIA → NVENC, Intel → QSV, AMD → VCE,
+  macOS → VideoToolbox) — fällt sauber auf Software-x265 zurück, wenn nichts
+  Passendes gefunden wird. Kein hartcodierter Encoder, funktioniert also
+  unabhängig vom GPU-Hersteller.
 - **Automatische Qualitäts-Empfehlung**: analysiert Auflösung/Bitrate der
   Quelle (Bits-pro-Pixel-Heuristik) und schlägt einen passenden CQ-Wert vor
   — grobkörnige/komplexe Quellen bekommen einen niedrigeren (besseren) Wert,
@@ -55,13 +81,16 @@ Zwei Werkzeuge:
 
 ## Voraussetzungen
 
-- Linux mit `apt` (Debian/Ubuntu) — `install.sh` löst alle Abhängigkeiten
-  automatisch auf, siehe [Installation](#installation)
-- Für NVENC-Encoding: eine NVIDIA-GPU mit NVENC-Unterstützung
+- Linux mit `apt` (Debian/Ubuntu) oder macOS mit [Homebrew](https://brew.sh)
+  — `install.sh` löst alle Abhängigkeiten automatisch auf, siehe
+  [Installation](#installation)
+- Für Hardware-Encoding: eine unterstützte GPU (NVIDIA/Intel/AMD unter
+  Linux, jeder Mac mit macOS 10.13+ für VideoToolbox) — ohne wird
+  automatisch auf Software-x265 zurückgefallen
 
-Ohne `apt` (andere Distributionen) manuell benötigt:
+Ohne `apt`/`brew` (andere Systeme) manuell benötigt:
 
-- [HandBrakeCLI](https://handbrake.fr/) mit NVENC-Unterstützung
+- [HandBrakeCLI](https://handbrake.fr/)
 - `mkvpropedit`, `mkvmerge` (Paket `mkvtoolnix`)
 - `ffprobe` (Paket `ffmpeg`)
 - `python3` (nur Standardbibliothek)
@@ -149,7 +178,8 @@ Ablauf:
    inklusive
 5. Wirft die Disc aus
 6. Schlägt eine Encoding-Qualität vor
-7. Encodiert mit NVENC/HandBrake, taggt die Datei
+7. Encodiert mit HandBrake (automatisch erkannter Hardware-Encoder), taggt
+   die Datei
 8. Fragt, ob der temporäre Rip gelöscht werden soll
 
 Laufwerk manuell erzwingen:
@@ -171,12 +201,13 @@ weggelassen.
 
 ## Warum sind die Ausgabedateien nicht winzig?
 
-NVENC (Hardware-HEVC) braucht bei gleicher Qualitätsstufe ca. 30-50% mehr
-Bitrate als Software-x265, um dieselbe visuelle Qualität zu erreichen —
-das ist der Kompromiss zwischen Geschwindigkeit und Kompressionseffizienz.
-Für deutlich kleinere Dateien bei gleicher Qualität: `-e x265` statt
-`-e nvenc_h265` in `lib/dvd-tools/common.sh` (`encode_to_hevc`), dafür ohne
-GPU-Beschleunigung und entsprechend langsamer.
+Hardware-HEVC-Encoder (NVENC, QSV, VCE, VideoToolbox) brauchen bei
+gleicher Qualitätsstufe ca. 30-50% mehr Bitrate als Software-x265, um
+dieselbe visuelle Qualität zu erreichen — das ist der Kompromiss zwischen
+Geschwindigkeit und Kompressionseffizienz. Für deutlich kleinere Dateien
+bei gleicher Qualität, auf Kosten der Geschwindigkeit: `pick_hevc_encoder`
+in `lib/dvd-tools/common.sh` so anpassen, dass sie immer `x265` liefert
+(Software-Encoding, keine GPU-Beschleunigung).
 
 ## Lizenz
 

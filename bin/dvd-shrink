@@ -3,7 +3,9 @@
 # alle Ton-/Untertitelspuren behalten, sauber benennen/taggen.
 set -euo pipefail
 
-LIB_DIR="$(cd "$(dirname "$(readlink -f "$0")")/../lib/dvd-tools" && pwd)"
+# "readlink -f" gibt es unter macOS/BSD nicht - python3 (ohnehin Pflicht) als
+# portabler Ersatz.
+LIB_DIR="$(cd "$(dirname "$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$0")")/../lib/dvd-tools" && pwd)"
 source "$LIB_DIR/common.sh"
 
 DIR="${1:-${DVD_TOOLS_OUTPUT_DIR:-$PWD}}"
@@ -84,7 +86,8 @@ echo
 hr
 echo "  Quelle:  $(basename "$IN")"
 echo "  Ziel:    $OUT"
-echo "  Encoder: nvenc_h265 (NVIDIA NVENC), CQ $QUALITY"
+DETECTED_ENCODER="$(pick_hevc_encoder)"
+echo "  Encoder: $DETECTED_ENCODER, CQ $QUALITY"
 echo "  Audio:   alle Spuren, unveraendert (Copy)"
 echo "  Subs:    alle Spuren"
 hr
@@ -93,7 +96,7 @@ read -rp "Starten? (j/N): " CONFIRM
 [[ "$CONFIRM" =~ ^[jJ]$ ]] || { echo "Abgebrochen."; exit 1; }
 
 echo
-step "Encoding laeuft (HandBrakeCLI, NVENC)..."
+step "Encoding laeuft (HandBrakeCLI, $DETECTED_ENCODER)..."
 encode_to_hevc "$IN" "$OUT" "$QUALITY"
 ok "Encoding abgeschlossen."
 

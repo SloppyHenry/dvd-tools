@@ -3,7 +3,9 @@
 # mit NVENC/HandBrake verkleinern -> sauber benannt ablegen.
 set -uo pipefail
 
-LIB_DIR="$(cd "$(dirname "$(readlink -f "$0")")/../lib/dvd-tools" && pwd)"
+# "readlink -f" gibt es unter macOS/BSD nicht - python3 (ohnehin Pflicht) als
+# portabler Ersatz.
+LIB_DIR="$(cd "$(dirname "$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$0")")/../lib/dvd-tools" && pwd)"
 source "$LIB_DIR/common.sh"
 
 OUT_DIR="${1:-${DVD_TOOLS_OUTPUT_DIR:-$PWD}}"
@@ -16,9 +18,14 @@ need mkvpropedit
 need mkvmerge
 need ffprobe
 need python3
-need eject
+if is_macos; then
+  command -v drutil >/dev/null 2>&1 || command -v diskutil >/dev/null 2>&1 \
+    || { err "Weder 'drutil' noch 'diskutil' gefunden (zum Disc-Auswurf)."; exit 1; }
+else
+  need eject
+fi
 
-makemkv() { stdbuf -oL -eL makemkvcon "$@"; }
+makemkv() { run_unbuffered makemkvcon "$@"; }
 
 # Listet aktive optische Laufwerke: "index\tdevice\tlabel\tname"
 list_drives() {
@@ -99,9 +106,12 @@ echo
 # ---------- Auf Disc warten ----------
 echo
 step "Bitte DVD jetzt in $DRIVE einlegen..."
+# Nutzt MakeMKVs eigene Laufwerksliste statt "blkid" (Linux-spezifisch,
+# gibt es unter macOS nicht) - funktioniert dadurch auf beiden Plattformen
+# identisch.
 DISC_LABEL=""
 while true; do
-  DISC_LABEL="$(blkid -o value -s LABEL "$DRIVE" 2>/dev/null || true)"
+  DISC_LABEL="$(list_drives | awk -F'\t' -v d="$DRIVE" '$2==d{print $3}')"
   [ -n "$DISC_LABEL" ] && break
   printf "\r  ${C_DIM}warte auf Disc...${C_RESET}"
   sleep 2
@@ -141,7 +151,7 @@ fi
 MAIN=""
 MAIN_SIZE=0
 for f in "${RIPPED[@]}"; do
-  sz=$(stat -c%s "$f")
+  sz=$(file_size_bytes "$f")
   if [ "$sz" -gt "$MAIN_SIZE" ]; then MAIN="$f"; MAIN_SIZE=$sz; fi
 done
 ok "Hauptfilm erkannt: $(basename "$MAIN") ($(du -h "$MAIN" | cut -f1))"
@@ -151,7 +161,7 @@ fi
 
 echo
 step "Werfe Disc aus..."
-eject "$DRIVE" 2>/dev/null && ok "Disc ausgeworfen." || warn "Auswerfen fehlgeschlagen (manuell entnehmen)."
+eject_disc "$DRIVE" && ok "Disc ausgeworfen." || warn "Auswerfen fehlgeschlagen (manuell entnehmen)."
 
 # ---------- Qualitaet ermitteln ----------
 echo
@@ -176,11 +186,12 @@ echo
 hr
 echo "  Rip:     $(basename "$MAIN")"
 echo "  Ziel:    $OUT"
-echo "  Encoder: nvenc_h265 (NVIDIA NVENC), CQ $QUALITY"
+DETECTED_ENCODER="$(pick_hevc_encoder)"
+echo "  Encoder: $DETECTED_ENCODER, CQ $QUALITY"
 hr
 echo
 
-step "Encoding laeuft (HandBrakeCLI, NVENC)..."
+step "Encoding laeuft (HandBrakeCLI, $DETECTED_ENCODER)..."
 encode_to_hevc "$MAIN" "$OUT" "$QUALITY"
 ok "Encoding abgeschlossen."
 

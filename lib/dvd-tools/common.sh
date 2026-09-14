@@ -10,6 +10,116 @@ export LC_NUMERIC=C
 DVD_TOOLS_CONFIG="${DVD_TOOLS_CONFIG:-$HOME/.config/dvd-tools/config}"
 [ -f "$DVD_TOOLS_CONFIG" ] && source "$DVD_TOOLS_CONFIG"
 
+# ---------- Plattform-Abstraktion (Linux/Debian und macOS) ----------
+# Alles hier kapselt Unterschiede zwischen GNU-Userland (Linux) und
+# BSD-Userland (macOS): date/readlink/stat/du-Flags, eject, Encoder-Wahl.
+DVD_TOOLS_OS="$(uname -s)"   # "Linux" oder "Darwin"
+
+is_macos() { [ "$DVD_TOOLS_OS" = "Darwin" ]; }
+
+# now_seconds -> Sekunden seit Epoch mit Nachkommastellen.
+# "date +%s.%N" gibt es nur unter GNU/Linux (BSD-date auf macOS versteht
+# %N nicht) - python3 ist ohnehin Pflichtabhaengigkeit, also darueber.
+now_seconds() { python3 -c 'import time; print(time.time())'; }
+
+# resolve_path PATH -> absoluter, aufgeloester Pfad (Ersatz fuer
+# "readlink -f", das es unter macOS/BSD nicht gibt).
+resolve_path() { python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$1"; }
+
+# file_size_bytes PATH -> Groesse in Bytes ("stat -c%s" ist GNU-spezifisch,
+# BSD/macOS-stat braucht "-f%z").
+file_size_bytes() {
+  if is_macos; then
+    stat -f%z "$1" 2>/dev/null || echo 0
+  else
+    stat -c%s "$1" 2>/dev/null || echo 0
+  fi
+}
+
+# dir_size_bytes PATH -> Gesamtgroesse eines Verzeichnisses in Bytes
+# ("du -sb" ist GNU-spezifisch, BSD-du kennt kein -b).
+dir_size_bytes() {
+  if is_macos; then
+    du -sk "$1" 2>/dev/null | awk '{print $1*1024}'
+  else
+    du -sb "$1" 2>/dev/null | cut -f1
+  fi
+}
+
+# cpu_count -> Anzahl CPU-Kerne ("nproc" gibt es unter macOS nicht).
+cpu_count() {
+  if is_macos; then
+    sysctl -n hw.ncpu 2>/dev/null || echo 4
+  else
+    nproc 2>/dev/null || echo 4
+  fi
+}
+
+# eject_disc DEVICE -> wirft die Disc aus (macOS: drutil/diskutil,
+# Linux: eject).
+eject_disc() {
+  local drive="$1"
+  if is_macos; then
+    drutil eject "$drive" >/dev/null 2>&1 || diskutil eject "$drive" >/dev/null 2>&1
+  else
+    eject "$drive" >/dev/null 2>&1
+  fi
+}
+
+# Liste der von der installierten HandBrakeCLI tatsaechlich unterstuetzten
+# Video-Encoder (einmal pro Lauf ermittelt und gecacht). Wichtig: das ist
+# die Quelle der Wahrheit dafuer, was waehlbar ist - nicht Plattform-
+# Annahmen, denn nicht jeder HandBrake-Build hat QSV/VAAPI mit einkompiliert.
+_HB_ENCODERS_CACHE=""
+handbrake_encoders() {
+  if [ -z "$_HB_ENCODERS_CACHE" ]; then
+    _HB_ENCODERS_CACHE="$(HandBrakeCLI -h 2>/dev/null | awk '
+      /--encoder <string>/ { f=1; next }
+      f && /^\s+[a-zA-Z0-9_]+\s*$/ { gsub(/^[ \t]+|[ \t]+$/, ""); print; next }
+      f && /^\s*$/ { exit }
+      f && /^\s+-/ { exit }
+    ')"
+  fi
+  printf '%s\n' "$_HB_ENCODERS_CACHE"
+}
+
+hb_has_encoder() { handbrake_encoders | grep -qx "$1"; }
+
+# pick_hevc_encoder -> prueft live, welche GPU vorhanden ist und welche
+# HEVC-Hardware-Encoder die installierte HandBrakeCLI dafuer tatsaechlich
+# mitbringt (NVENC/NVIDIA, QSV/Intel, VCE/AMD, VideoToolbox/macOS) -
+# faellt auf Software-x265 zurueck, wenn nichts Passendes gefunden wird.
+pick_hevc_encoder() {
+  if is_macos; then
+    hb_has_encoder vt_h265 && { echo "vt_h265"; return; }
+    echo "x265"
+    return
+  fi
+
+  local gpu_info=""
+  command -v lspci >/dev/null 2>&1 && gpu_info="$(lspci 2>/dev/null | grep -Ei 'vga|3d|display')"
+
+  if echo "$gpu_info" | grep -qi nvidia \
+     && command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1 \
+     && hb_has_encoder nvenc_h265; then
+    echo "nvenc_h265"; return
+  fi
+  if echo "$gpu_info" | grep -qi intel && hb_has_encoder qsv_h265; then
+    echo "qsv_h265"; return
+  fi
+  if echo "$gpu_info" | grep -Eqi 'amd|ati|advanced micro devices' && hb_has_encoder vce_h265; then
+    echo "vce_h265"; return
+  fi
+  # GPU-Erkennung war nicht eindeutig/erfolglos - trotzdem lieber irgendeinen
+  # von HandBrake tatsaechlich angebotenen Hardware-Encoder nehmen, bevor
+  # auf Software ausgewichen wird.
+  local enc
+  for enc in nvenc_h265 qsv_h265 vce_h265; do
+    hb_has_encoder "$enc" && { echo "$enc"; return; }
+  done
+  echo "x265"
+}
+
 # ---------- Optik ----------
 if [ -t 1 ]; then
   C_RESET=$(tput sgr0); C_BOLD=$(tput bold)
@@ -318,17 +428,17 @@ print(text)
 makemkv_rip() {
   local source="$1" rip_dir="$2" stall_timeout="${3:-0}"
   local log; log="$(mktemp)"
-  stdbuf -oL -eL makemkvcon -r --minlength=1200 mkv "$source" all "$rip_dir" \
+  run_unbuffered makemkvcon -r --minlength=1200 mkv "$source" all "$rip_dir" \
     > "$log" 2>&1 &
   local pid=$!
 
   local prev_bytes=0 prev_time cur_bytes cur_time dt db mbs xf pct_line pct status label stalled_for=0
-  prev_time=$(date +%s.%N)
+  prev_time=$(now_seconds)
   while kill -0 "$pid" 2>/dev/null; do
     sleep 1
-    cur_bytes="$(du -sb "$rip_dir" 2>/dev/null | cut -f1)"
+    cur_bytes="$(dir_size_bytes "$rip_dir")"
     cur_bytes="${cur_bytes:-0}"
-    cur_time=$(date +%s.%N)
+    cur_time=$(now_seconds)
     dt=$(awk -v a="$cur_time" -v b="$prev_time" 'BEGIN{print a-b}')
     db=$((cur_bytes - prev_bytes))
     read -r mbs xf <<<"$(awk -v b="$db" -v t="$dt" -v c="$DVD_1X_BYTES_PER_SEC" 'BEGIN{
@@ -389,6 +499,10 @@ makemkv_rip() {
 # einfach ignoriert, kein harter Fehler).
 set_drive_speed() {
   local drive="$1" speed="$2"
+  # Unter macOS gibt es kein Aequivalent zu "eject -x" (Laufwerks-
+  # Geschwindigkeit drosseln) - rip_main_feature ueberspringt die
+  # entsprechende Eskalationsstufe dort daher komplett.
+  is_macos && return 1
   eject -x "$speed" "$drive" >/dev/null 2>&1
 }
 
@@ -428,17 +542,23 @@ rip_main_feature() {
   if makemkv_rip "disc:$mk_index" "$rip_dir" 240; then
     return 0
   fi
-  warn "Rippen haengt oder schlaegt fehl (vermutlich Lesefehler) - versuche mit gedrosselter Geschwindigkeit (4x)..."
-  find "$rip_dir" -mindepth 1 -delete 2>/dev/null
-  set_drive_speed "$drive" 4
-  sleep 2
+  warn "Rippen haengt oder schlaegt fehl (vermutlich Lesefehler)."
 
-  if makemkv_rip "disc:$mk_index" "$rip_dir" 300; then
-    ok "Rip bei gedrosselter Geschwindigkeit erfolgreich."
+  if is_macos; then
+    info "Geschwindigkeitsdrosselung gibt es unter macOS nicht - ueberspringe diese Stufe."
+  else
+    warn "Versuche mit gedrosselter Geschwindigkeit (4x)..."
+    find "$rip_dir" -mindepth 1 -delete 2>/dev/null
+    set_drive_speed "$drive" 4
+    sleep 2
+
+    if makemkv_rip "disc:$mk_index" "$rip_dir" 300; then
+      ok "Rip bei gedrosselter Geschwindigkeit erfolgreich."
+      set_drive_speed "$drive" 0
+      return 0
+    fi
     set_drive_speed "$drive" 0
-    return 0
   fi
-  set_drive_speed "$drive" 0
   warn "Weiterhin Leseprobleme - wechsle auf ddrescue-Imaging."
   warn "Das kann bei stark beschaedigten Discs deutlich laenger dauern (im Extremfall Stunden statt Minuten)."
   find "$rip_dir" -mindepth 1 -delete 2>/dev/null
@@ -453,17 +573,45 @@ rip_main_feature() {
   makemkv_rip "iso:$iso" "$rip_dir" 0
 }
 
+# run_unbuffered CMD... -> erzwingt Zeilenpufferung, sonst puffern
+# makemkvcon/HandBrakeCLI beim Schreiben in eine Pipe blockweise und der
+# Live-Fortschritt kommt verzoegert/gar nicht an. "stdbuf" ist GNU-
+# coreutils-spezifisch (Linux); unter macOS gibt es das nur ueber
+# Homebrew ("coreutils" -> gstdbuf, oder "expect" -> unbuffer). Ohne eines
+# davon laeuft der Befehl normal (ggf. mit traegerer Live-Anzeige).
+run_unbuffered() {
+  if command -v stdbuf >/dev/null 2>&1; then
+    stdbuf -oL -eL "$@"
+  elif command -v gstdbuf >/dev/null 2>&1; then
+    gstdbuf -oL -eL "$@"
+  elif command -v unbuffer >/dev/null 2>&1; then
+    unbuffer "$@"
+  else
+    "$@"
+  fi
+}
+
 # ---------- HandBrake-Encode mit huebschem Fortschrittsbalken ----------
 # encode_to_hevc IN OUT QUALITY
 encode_to_hevc() {
   local in="$1" out="$2" quality="$3"
-  stdbuf -oL -eL HandBrakeCLI \
+  local encoder; encoder="$(pick_hevc_encoder)"
+  local extra=()
+  case "$encoder" in
+    nvenc_h265|x265) extra=(--encoder-preset slow --encoder-profile main) ;;
+    # qsv_h265/vce_h265/vt_h265: eigene, abweichende Preset-Systeme (bei QSV
+    # z.B. "speed"/"balanced"/"quality" statt "slow") - nicht verifizierbar
+    # ohne passende Hardware, daher HandBrake-Standardwerte verwenden statt
+    # einen moeglicherweise falschen Wert zu raten.
+    *) extra=() ;;
+  esac
+
+  run_unbuffered HandBrakeCLI \
     -i "$in" \
     -o "$out" \
     -f av_mkv \
-    -e nvenc_h265 \
-    --encoder-preset slow \
-    --encoder-profile main \
+    -e "$encoder" \
+    "${extra[@]}" \
     -q "$quality" \
     --comb-detect --decomb \
     --auto-anamorphic \
@@ -473,9 +621,9 @@ encode_to_hevc() {
       if [[ "$line" =~ ([0-9]+\.[0-9]+)\ %(\ \(([0-9.]+)\ fps,\ avg\ ([0-9.]+)\ fps,\ ETA\ ([0-9hms]+)\))? ]]; then
         pct="${BASH_REMATCH[1]}"
         if [ -n "${BASH_REMATCH[3]:-}" ]; then
-          detail="Encoding (NVENC)  ${BASH_REMATCH[3]} fps (avg ${BASH_REMATCH[4]})  ETA ${BASH_REMATCH[5]}"
+          detail="Encoding (${encoder})  ${BASH_REMATCH[3]} fps (avg ${BASH_REMATCH[4]})  ETA ${BASH_REMATCH[5]}"
         else
-          detail="Encoding (NVENC)"
+          detail="Encoding (${encoder})"
         fi
         progress_bar "$pct" "$detail"
       fi
