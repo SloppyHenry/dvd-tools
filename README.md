@@ -206,7 +206,7 @@ gleicher Qualitätsstufe ca. 30-50% mehr Bitrate als Software-x265, um
 dieselbe visuelle Qualität zu erreichen — das ist der Kompromiss zwischen
 Geschwindigkeit und Kompressionseffizienz. Für deutlich kleinere Dateien
 bei gleicher Qualität, auf Kosten der Geschwindigkeit: `pick_hevc_encoder`
-in `lib/dvd-tools/common.sh` so anpassen, dass sie immer `x265` liefert
+in `lib/dvd-tools/platform.sh` so anpassen, dass sie immer `x265` liefert
 (Software-Encoding, keine GPU-Beschleunigung).
 
 ## Lizenz

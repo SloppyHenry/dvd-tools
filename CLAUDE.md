@@ -7,24 +7,34 @@ und macOS. Governance-Einschätzung und Umfangsentscheidung: `docs/status.md`.
 ## Struktur
 
 ```
-bin/dvd-shrink              vorhandenen Rip verkleinern (interaktiv)
-bin/dvd-auto                DVD einlegen -> rippen -> verkleinern -> benennen
-lib/dvd-tools/common.sh     gemeinsame Funktionen, von beiden Skripten gesourced
-install.sh                  installiert Abhaengigkeiten (apt/brew) + die Tools
-tests/                      Regressionstests fuer die riskantesten Funktionen
-.github/workflows/          CI: shellcheck + Syntaxcheck
-docs/                       status.md, tech-debt.md
+bin/dvd-shrink                  vorhandenen Rip verkleinern (interaktiv)
+bin/dvd-auto                    DVD einlegen -> rippen -> verkleinern -> benennen
+lib/dvd-tools/common.sh         duenner Loader, sourced die Module unten
+lib/dvd-tools/platform.sh       Linux/macOS-Abstraktion, GPU-/Encoder-Erkennung
+lib/dvd-tools/ui.sh             Farben, Fortschrittsbalken/Spinner, Terminalbreite
+lib/dvd-tools/naming.sh         Namensschema, XML-Tagging
+lib/dvd-tools/quality.sh        CQ-Qualitaets-Heuristik
+lib/dvd-tools/identify.sh       Disc-Label-Bereinigung, TMDB-Suche
+lib/dvd-tools/rip.sh            MakeMKV-Rip + Recovery-Eskalation (ddrescue)
+lib/dvd-tools/encode.sh         HandBrake-Encode
+install.sh                      installiert Abhaengigkeiten (apt/brew) + die Tools
+tests/                          Regressionstests fuer die riskantesten Funktionen
+.github/workflows/               CI: shellcheck + Syntaxcheck
+docs/                            status.md, tech-debt.md
 ```
 
-Alle drei Skripte sind reines Bash + `python3`-Einzeiler (kein Build-System,
-kein Paketmanager-Ökosystem). Gemeinsame Logik gehört nach `common.sh`,
-nicht dupliziert in die einzelnen Tools.
+Alle Skripte sind reines Bash + `python3`-Einzeiler (kein Build-System,
+kein Paketmanager-Ökosystem). Gemeinsame Logik gehört in das passende
+`lib/dvd-tools/*.sh`-Modul, nicht dupliziert in die einzelnen Tools. Neue
+Module werden in `common.sh`s Ladeschleife eingetragen. Richtwert ~300,
+harte Grenze 500 Zeilen pro Datei — bei Ueberschreitung aufteilen, nicht
+weiterschreiben.
 
 ## Befehle
 
 ```bash
-bash -n bin/dvd-auto bin/dvd-shrink lib/dvd-tools/common.sh install.sh   # Syntaxcheck
-shellcheck bin/* lib/dvd-tools/*.sh install.sh                          # Lint (falls installiert)
+bash -n bin/dvd-auto bin/dvd-shrink lib/dvd-tools/*.sh install.sh   # Syntaxcheck
+shellcheck bin/* lib/dvd-tools/*.sh install.sh                      # Lint (falls installiert)
 tests/run.sh                                                            # Regressionstests
 ```
 

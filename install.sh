@@ -141,7 +141,7 @@ else
   warn "Software-Encoding (x265, deutlich langsamer) zurueck."
 fi
 info "dvd-tools prueft dies bei jedem Encode live neu (siehe pick_hevc_encoder"
-info "in lib/dvd-tools/common.sh) - diese Meldung ist nur eine Momentaufnahme."
+info "in lib/dvd-tools/platform.sh) - diese Meldung ist nur eine Momentaufnahme."
 
 step "Installiere dvd-tools nach $BIN_DIR und $LIB_DIR..."
 mkdir -p "$BIN_DIR" "$LIB_DIR"
