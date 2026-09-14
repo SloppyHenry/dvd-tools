@@ -307,18 +307,22 @@ print(text)
 ' 2>/dev/null
 }
 
-# makemkv_rip MK_INDEX RIP_DIR -> rippt mit Live-Anzeige, Rueckgabewert ist
-# der Exitcode von makemkvcon. Zeigt IMMER etwas an (Spinner+Status+Speed,
-# sobald Daten fliessen), unabhaengig davon, ob MakeMKV ueberhaupt PRGV-
-# Prozentzeilen liefert - manche Versionen tun das beim "mkv"-Befehl nicht.
+# makemkv_rip SOURCE RIP_DIR [STALL_TIMEOUT] -> rippt mit Live-Anzeige.
+# SOURCE ist alles, was makemkvcon als Quelle akzeptiert ("disc:N" oder
+# "iso:/pfad/zur.iso"). STALL_TIMEOUT (Sekunden ohne jeglichen Datenzuwachs,
+# 0 = kein Limit) bricht bei vermuteten Lesefehlern kontrolliert ab statt
+# endlos zu haengen (Rueckgabe 124, wie bei timeout(1)).
+# Zeigt IMMER etwas an (Spinner+Status+Speed sobald Daten fliessen),
+# unabhaengig davon, ob MakeMKV ueberhaupt PRGV-Prozentzeilen liefert -
+# manche Versionen tun das beim "mkv"-Befehl nicht.
 makemkv_rip() {
-  local mk_index="$1" rip_dir="$2"
+  local source="$1" rip_dir="$2" stall_timeout="${3:-0}"
   local log; log="$(mktemp)"
-  stdbuf -oL -eL makemkvcon -r --minlength=1200 mkv "disc:$mk_index" all "$rip_dir" \
+  stdbuf -oL -eL makemkvcon -r --minlength=1200 mkv "$source" all "$rip_dir" \
     > "$log" 2>&1 &
   local pid=$!
 
-  local prev_bytes=0 prev_time cur_bytes cur_time dt db mbs xf pct_line pct status label
+  local prev_bytes=0 prev_time cur_bytes cur_time dt db mbs xf pct_line pct status label stalled_for=0
   prev_time=$(date +%s.%N)
   while kill -0 "$pid" 2>/dev/null; do
     sleep 1
@@ -332,6 +336,19 @@ makemkv_rip() {
       x  = (t > 0 && b > 0) ? b/t/c : 0
       printf "%.1f %.1f", mb, x
     }')"
+
+    if [ "$db" -le 0 ]; then
+      stalled_for=$((stalled_for + 1))
+    else
+      stalled_for=0
+    fi
+    if [ "$stall_timeout" -gt 0 ] && [ "$stalled_for" -ge "$stall_timeout" ]; then
+      kill "$pid" 2>/dev/null
+      wait "$pid" 2>/dev/null
+      progress_done
+      rm -f "$log"
+      return 124
+    fi
 
     status="$(latest_status "$log")"
 
@@ -365,6 +382,75 @@ makemkv_rip() {
   local rc=$?
   rm -f "$log"
   return $rc
+}
+
+# set_drive_speed DEVICE SPEED_X -> drosselt die Laufwerksgeschwindigkeit
+# (best effort, manche Laufwerke/Kernel unterstuetzen das nicht - dann wird
+# einfach ignoriert, kein harter Fehler).
+set_drive_speed() {
+  local drive="$1" speed="$2"
+  eject -x "$speed" "$drive" >/dev/null 2>&1
+}
+
+# rescue_image_disc DEVICE ISO_PATH -> zweistufiges ddrescue-Imaging
+# (1. schnell, ueberspringt kaputte Stellen  2. gezielte Retries nur auf
+# den kaputten Stellen). Laesst ddrescues eigene, dafuer gebaute
+# Live-Anzeige direkt durch (nicht selbst nachgebaut). Kann bei stark
+# beschaedigten Discs deutlich laenger dauern als ein normaler Rip.
+rescue_image_disc() {
+  local drive="$1" iso="$2"
+  local mapfile="${iso}.map"
+  need ddrescue
+
+  step "ddrescue Durchlauf 1/2 (schnell, ueberspringt kaputte Stellen)..."
+  ddrescue -n -b 2048 "$drive" "$iso" "$mapfile"
+
+  step "ddrescue Durchlauf 2/2 (gezielte Retries nur auf den kaputten Stellen - kann dauern)..."
+  ddrescue -d -r3 -b 2048 "$drive" "$iso" "$mapfile"
+
+  if command -v ddrescuelog >/dev/null 2>&1; then
+    info "ddrescue-Zusammenfassung:"
+    ddrescuelog -t "$mapfile" 2>/dev/null | sed 's/^/  /'
+  fi
+
+  [ -s "$iso" ]
+}
+
+# rip_main_feature MK_INDEX DRIVE RIP_DIR -> rippt mit dreistufiger
+# Eskalation bei Lesefehlern/Haengern:
+#   1. normale Geschwindigkeit
+#   2. gedrosselte Geschwindigkeit (4x)
+#   3. ddrescue-Image + Rip aus dem Image
+# Rueckgabewert 0 bei Erfolg, ungleich 0 wenn alle Stufen fehlschlagen.
+rip_main_feature() {
+  local mk_index="$1" drive="$2" rip_dir="$3"
+
+  if makemkv_rip "disc:$mk_index" "$rip_dir" 240; then
+    return 0
+  fi
+  warn "Rippen haengt oder schlaegt fehl (vermutlich Lesefehler) - versuche mit gedrosselter Geschwindigkeit (4x)..."
+  find "$rip_dir" -mindepth 1 -delete 2>/dev/null
+  set_drive_speed "$drive" 4
+  sleep 2
+
+  if makemkv_rip "disc:$mk_index" "$rip_dir" 300; then
+    ok "Rip bei gedrosselter Geschwindigkeit erfolgreich."
+    set_drive_speed "$drive" 0
+    return 0
+  fi
+  set_drive_speed "$drive" 0
+  warn "Weiterhin Leseprobleme - wechsle auf ddrescue-Imaging."
+  warn "Das kann bei stark beschaedigten Discs deutlich laenger dauern (im Extremfall Stunden statt Minuten)."
+  find "$rip_dir" -mindepth 1 -delete 2>/dev/null
+
+  local iso; iso="$(dirname "$rip_dir")/rescue.iso"
+  if ! rescue_image_disc "$drive" "$iso"; then
+    err "ddrescue konnte kein brauchbares Disc-Image erstellen."
+    return 1
+  fi
+  ok "Disc-Image erstellt ($(du -h "$iso" 2>/dev/null | cut -f1)), rippe nun aus dem Image..."
+
+  makemkv_rip "iso:$iso" "$rip_dir" 0
 }
 
 # ---------- HandBrake-Encode mit huebschem Fortschrittsbalken ----------

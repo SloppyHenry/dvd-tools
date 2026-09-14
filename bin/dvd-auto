@@ -129,7 +129,7 @@ step "Rippe Hauptfilm mit MakeMKV (das kann einige Minuten dauern)..."
 RIP_DIR="$TMP_ROOT/rip"
 mkdir -p "$RIP_DIR"
 
-makemkv_rip "$MK_INDEX" "$RIP_DIR" || warn "MakeMKV meldete einen Fehlercode - pruefe unten, ob Titel entstanden sind."
+rip_main_feature "$MK_INDEX" "$DRIVE" "$RIP_DIR" || warn "Rippen meldete einen Fehlercode - pruefe unten, ob Titel entstanden sind."
 
 mapfile -t RIPPED < <(find "$RIP_DIR" -maxdepth 1 -iname "*.mkv" | sort)
 if [ "${#RIPPED[@]}" -eq 0 ]; then

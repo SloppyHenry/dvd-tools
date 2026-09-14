@@ -38,6 +38,20 @@ Zwei Werkzeuge:
   tatsächliche Lesegeschwindigkeit in MB/s und dem branchenüblichen
   x-Faktor (z.B. „8.2x“, wie bei DVD-Brennern/-Laufwerken angegeben),
   beim Encoding fps und ETA von HandBrake
+- **Automatische Wiederherstellung bei zerkratzten/beschädigten Discs**
+  (`dvd-auto`): erkennt haengende/fehlschlagende Rips (kein Datenzuwachs
+  ueber laengere Zeit) und eskaliert automatisch in drei Stufen:
+  1. normale Geschwindigkeit
+  2. gedrosselte Lesegeschwindigkeit (4x - liest beschaedigte Discs oft
+     zuverlaessiger, da weniger Vibration)
+  3. [`ddrescue`](https://www.gnu.org/software/ddrescue/)-Imaging der
+     gesamten Disc (zwei Durchlaeufe: erst schnell mit Ueberspringen
+     kaputter Stellen, dann gezielte Retries nur dort), danach wird aus
+     dem entstandenen Image gerippt statt von der Live-Disc
+
+  Stufe 3 kann bei starker Beschaedigung deutlich laenger dauern als ein
+  normaler Rip (im Extremfall Stunden statt Minuten) - ddrescues eigene,
+  dafuer gebaute Live-Anzeige wird direkt durchgereicht.
 
 ## Voraussetzungen
 

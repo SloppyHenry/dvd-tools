@@ -33,7 +33,7 @@ fi
 step "Installiere Laufzeit- und Build-Abhaengigkeiten ueber apt..."
 sudo apt-get update
 sudo apt-get install -y \
-  handbrake-cli mkvtoolnix ffmpeg python3 curl eject util-linux \
+  handbrake-cli mkvtoolnix ffmpeg python3 curl eject util-linux gddrescue \
   build-essential pkg-config libc6-dev libssl-dev libexpat1-dev \
   libavcodec-dev libavutil-dev zlib1g-dev
 ok "apt-Pakete installiert."
