@@ -1,0 +1,118 @@
+#!/usr/bin/env bash
+# dvd-shrink: vorhandenen DVD-MKV-Rip auswaehlen, mit NVENC (HEVC) verkleinern,
+# alle Ton-/Untertitelspuren behalten, sauber benennen/taggen.
+set -euo pipefail
+
+LIB_DIR="$(cd "$(dirname "$(readlink -f "$0")")/../lib/dvd-tools" && pwd)"
+source "$LIB_DIR/common.sh"
+
+DIR="${1:-${DVD_TOOLS_OUTPUT_DIR:-$PWD}}"
+DEFAULT_QUALITY=19
+
+need HandBrakeCLI
+need mkvpropedit
+need mkvmerge
+need ffprobe
+need python3
+
+header "dvd-shrink"
+info "Suche MKV-Dateien in: $DIR"
+echo
+
+mapfile -t FILES < <(find "$DIR" -maxdepth 1 -type f -iname "*.mkv" | sort)
+
+if [ "${#FILES[@]}" -eq 0 ]; then
+  err "Keine .mkv-Dateien in $DIR gefunden."
+  exit 1
+fi
+
+echo "Vorhandene Dateien:"
+for i in "${!FILES[@]}"; do
+  size=$(du -h "${FILES[$i]}" | cut -f1)
+  printf "  [%2d] %-60s %8s\n" "$((i+1))" "$(basename "${FILES[$i]}")" "$size"
+done
+echo
+
+read -rp "Welche Datei soll verarbeitet werden? (Nummer): " CHOICE
+if ! [[ "$CHOICE" =~ ^[0-9]+$ ]] || [ "$CHOICE" -lt 1 ] || [ "$CHOICE" -gt "${#FILES[@]}" ]; then
+  err "Ungueltige Auswahl."
+  exit 1
+fi
+IN="${FILES[$((CHOICE-1))]}"
+ok "Ausgewaehlt: $(basename "$IN")"
+echo
+
+read -rp "Filmtitel (z.B. 'The Green Mile'): " TITLE
+[ -z "$TITLE" ] && { err "Titel darf nicht leer sein."; exit 1; }
+
+read -rp "Erscheinungsjahr (optional, Enter zum Ueberspringen): " YEAR
+read -rp "TMDB-ID (optional, Enter zum Ueberspringen): " TMDBID
+
+echo
+step "Analysiere Quelldatei..."
+SUGGESTION="$(suggest_quality "$IN")"
+SUGGESTED_CQ="$(cut -f1 <<<"$SUGGESTION")"
+ANALYSIS_INFO="$(cut -f2 <<<"$SUGGESTION")"
+if [[ "$SUGGESTED_CQ" =~ ^[0-9]+$ ]]; then
+  info "$ANALYSIS_INFO"
+  info "-> Vorschlag: CQ $SUGGESTED_CQ"
+else
+  warn "Analyse fehlgeschlagen, verwende Standardwert."
+  SUGGESTED_CQ="$DEFAULT_QUALITY"
+fi
+echo
+
+read -rp "Qualitaet CQ [kleiner=besser/groesser] (Enter fuer Vorschlag $SUGGESTED_CQ): " QUALITY
+QUALITY="${QUALITY:-$SUGGESTED_CQ}"
+if ! [[ "$QUALITY" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+  err "Ungueltiger Qualitaetswert."
+  exit 1
+fi
+
+SAFE_BASENAME="$(build_basename "$TITLE" "$YEAR" "$TMDBID")"
+OUT_FOLDER="${DIR}/${SAFE_BASENAME}"
+OUT="${OUT_FOLDER}/${SAFE_BASENAME}.mkv"
+
+if [ -e "$OUT" ]; then
+  warn "Zieldatei existiert bereits: $OUT"
+  read -rp "Ueberschreiben? (j/N): " OVERWRITE
+  [[ "$OVERWRITE" =~ ^[jJ]$ ]] || { echo "Abgebrochen."; exit 1; }
+fi
+mkdir -p "$OUT_FOLDER"
+
+echo
+hr
+echo "  Quelle:  $(basename "$IN")"
+echo "  Ziel:    $OUT"
+echo "  Encoder: nvenc_h265 (NVIDIA NVENC), CQ $QUALITY"
+echo "  Audio:   alle Spuren, unveraendert (Copy)"
+echo "  Subs:    alle Spuren"
+hr
+echo
+read -rp "Starten? (j/N): " CONFIRM
+[[ "$CONFIRM" =~ ^[jJ]$ ]] || { echo "Abgebrochen."; exit 1; }
+
+echo
+step "Encoding laeuft (HandBrakeCLI, NVENC)..."
+encode_to_hevc "$IN" "$OUT" "$QUALITY"
+ok "Encoding abgeschlossen."
+
+step "Tagge Datei..."
+tag_mkv "$OUT" "$TITLE" "$YEAR"
+ok "Tagging abgeschlossen."
+
+echo
+header "Fertig"
+OLD_SIZE=$(du -h "$IN" | cut -f1)
+NEW_SIZE=$(du -h "$OUT" | cut -f1)
+echo "  Original: $OLD_SIZE  ->  Neu: $NEW_SIZE"
+echo "  Datei:    $OUT"
+echo
+
+read -rp "Original-Datei '$(basename "$IN")' loeschen? (j/N): " DEL
+if [[ "$DEL" =~ ^[jJ]$ ]]; then
+  rm -f "$IN"
+  ok "Original geloescht."
+else
+  info "Original wurde behalten."
+fi

@@ -1,0 +1,197 @@
+#!/usr/bin/env bash
+# dvd-auto: DVD einlegen -> automatisch erkennen -> mit MakeMKV rippen ->
+# mit NVENC/HandBrake verkleinern -> sauber benannt ablegen.
+set -uo pipefail
+
+LIB_DIR="$(cd "$(dirname "$(readlink -f "$0")")/../lib/dvd-tools" && pwd)"
+source "$LIB_DIR/common.sh"
+
+OUT_DIR="${1:-${DVD_TOOLS_OUTPUT_DIR:-$PWD}}"
+DEFAULT_QUALITY=19
+DRIVE="${DVD_AUTO_DRIVE:-}"     # z.B. /dev/sr0, leer = automatisch waehlen
+
+need makemkvcon
+need HandBrakeCLI
+need mkvpropedit
+need mkvmerge
+need ffprobe
+need python3
+need eject
+
+makemkv() { makemkvcon "$@"; }
+
+# Listet aktive optische Laufwerke: "index\tdevice\tlabel"
+list_drives() {
+  makemkv -r --cache=1 info disc:9999 2>/dev/null | python3 -c '
+import sys, csv
+for raw in sys.stdin:
+    raw = raw.strip()
+    if not raw.startswith("DRV:"):
+        continue
+    fields = next(csv.reader([raw[4:]]))
+    idx, state = fields[0], fields[1]
+    name, label, dev = fields[4], fields[5], fields[6]
+    if state == "256" or not dev:
+        continue
+    print(f"{idx}\t{dev}\t{label}")
+'
+}
+
+TMP_ROOT="$(mktemp -d /tmp/dvd-auto.XXXXXX)"
+KEEP_RIP=0
+cleanup() { [ "$KEEP_RIP" -eq 1 ] || rm -rf "$TMP_ROOT"; }
+trap cleanup EXIT
+
+header "dvd-auto"
+info "Ausgabeordner: $OUT_DIR"
+echo
+
+# ---------- Laufwerk waehlen ----------
+mapfile -t DRIVES < <(list_drives)
+if [ "${#DRIVES[@]}" -eq 0 ]; then
+  err "Kein optisches Laufwerk gefunden."
+  exit 1
+fi
+
+if [ -n "$DRIVE" ]; then
+  MK_INDEX=""
+  for row in "${DRIVES[@]}"; do
+    dev="$(cut -f2 <<<"$row")"
+    [ "$dev" = "$DRIVE" ] && MK_INDEX="$(cut -f1 <<<"$row")"
+  done
+  [ -z "$MK_INDEX" ] && { err "Laufwerk $DRIVE nicht gefunden."; exit 1; }
+elif [ "${#DRIVES[@]}" -eq 1 ]; then
+  MK_INDEX="$(cut -f1 <<<"${DRIVES[0]}")"
+  DRIVE="$(cut -f2 <<<"${DRIVES[0]}")"
+else
+  echo "Mehrere Laufwerke gefunden:"
+  for i in "${!DRIVES[@]}"; do
+    printf "  [%d] %s\n" "$((i+1))" "$(cut -f2 <<<"${DRIVES[$i]}")"
+  done
+  read -rp "Welches Laufwerk verwenden? (Nummer): " DCHOICE
+  row="${DRIVES[$((DCHOICE-1))]}"
+  MK_INDEX="$(cut -f1 <<<"$row")"
+  DRIVE="$(cut -f2 <<<"$row")"
+fi
+ok "Verwende Laufwerk: $DRIVE (MakeMKV disc:$MK_INDEX)"
+echo
+
+# ---------- Auf Disc warten ----------
+echo
+step "Bitte DVD jetzt in $DRIVE einlegen..."
+DISC_LABEL=""
+while true; do
+  DISC_LABEL="$(blkid -o value -s LABEL "$DRIVE" 2>/dev/null || true)"
+  [ -n "$DISC_LABEL" ] && break
+  printf "\r  ${C_DIM}warte auf Disc...${C_RESET}"
+  sleep 2
+done
+echo
+ok "Disc erkannt: $DISC_LABEL"
+
+# ---------- Titel automatisch erkennen (setzt TITLE/YEAR/TMDBID) ----------
+echo
+identify_from_label "$DISC_LABEL"
+[ -z "$TITLE" ] && { err "Titel darf nicht leer sein."; exit 1; }
+
+SAFE_BASENAME="$(build_basename "$TITLE" "$YEAR" "$TMDBID")"
+OUT_FOLDER="${OUT_DIR}/${SAFE_BASENAME}"
+OUT="${OUT_FOLDER}/${SAFE_BASENAME}.mkv"
+if [ -e "$OUT" ]; then
+  warn "Zieldatei existiert bereits: $OUT"
+  read -rp "Ueberschreiben? (j/N): " OVERWRITE
+  [[ "$OVERWRITE" =~ ^[jJ]$ ]] || { echo "Abgebrochen."; exit 1; }
+fi
+
+# ---------- Rippen ----------
+echo
+step "Rippe Hauptfilm mit MakeMKV (das kann einige Minuten dauern)..."
+RIP_DIR="$TMP_ROOT/rip"
+mkdir -p "$RIP_DIR"
+
+makemkv -r --minlength=1200 mkv "disc:$MK_INDEX" all "$RIP_DIR" 2>&1 | while IFS= read -r line; do
+  if [[ "$line" == PRGV:* ]]; then
+    IFS=',' read -r cur total max <<<"${line#PRGV:}"
+    if [[ "$max" =~ ^[0-9]+$ ]] && [ "$max" -gt 0 ]; then
+      pct=$(python3 -c "print(f'{${total}*100/${max}:.1f}')" 2>/dev/null)
+      [ -n "$pct" ] && progress_bar "$pct" "Rippen (MakeMKV)"
+    fi
+  elif [[ "$line" == MSG:* ]]; then
+    :
+  fi
+done
+progress_done
+
+mapfile -t RIPPED < <(find "$RIP_DIR" -maxdepth 1 -iname "*.mkv" | sort)
+if [ "${#RIPPED[@]}" -eq 0 ]; then
+  err "MakeMKV hat keine Titel erzeugt. Ist die Disc lesbar / das Laufwerk frei (nicht durch die MakeMKV-GUI belegt)?"
+  exit 1
+fi
+
+# Groesste Datei = Hauptfilm; Rest sind vermutlich Extras.
+MAIN=""
+MAIN_SIZE=0
+for f in "${RIPPED[@]}"; do
+  sz=$(stat -c%s "$f")
+  if [ "$sz" -gt "$MAIN_SIZE" ]; then MAIN="$f"; MAIN_SIZE=$sz; fi
+done
+ok "Hauptfilm erkannt: $(basename "$MAIN") ($(du -h "$MAIN" | cut -f1))"
+if [ "${#RIPPED[@]}" -gt 1 ]; then
+  info "$(( ${#RIPPED[@]} - 1 )) weitere Titel (vermutlich Extras) bleiben unangetastet in: $RIP_DIR"
+fi
+
+echo
+step "Werfe Disc aus..."
+eject "$DRIVE" 2>/dev/null && ok "Disc ausgeworfen." || warn "Auswerfen fehlgeschlagen (manuell entnehmen)."
+
+# ---------- Qualitaet ermitteln ----------
+echo
+step "Analysiere Rip..."
+SUGGESTION="$(suggest_quality "$MAIN")"
+SUGGESTED_CQ="$(cut -f1 <<<"$SUGGESTION")"
+ANALYSIS_INFO="$(cut -f2 <<<"$SUGGESTION")"
+if [[ "$SUGGESTED_CQ" =~ ^[0-9]+$ ]]; then
+  info "$ANALYSIS_INFO"
+  info "-> Vorschlag: CQ $SUGGESTED_CQ"
+else
+  warn "Analyse fehlgeschlagen, verwende Standardwert."
+  SUGGESTED_CQ="$DEFAULT_QUALITY"
+fi
+echo
+read -rp "Qualitaet CQ (Enter fuer Vorschlag $SUGGESTED_CQ): " QUALITY
+QUALITY="${QUALITY:-$SUGGESTED_CQ}"
+
+mkdir -p "$OUT_FOLDER"
+
+echo
+hr
+echo "  Rip:     $(basename "$MAIN")"
+echo "  Ziel:    $OUT"
+echo "  Encoder: nvenc_h265 (NVIDIA NVENC), CQ $QUALITY"
+hr
+echo
+
+step "Encoding laeuft (HandBrakeCLI, NVENC)..."
+encode_to_hevc "$MAIN" "$OUT" "$QUALITY"
+ok "Encoding abgeschlossen."
+
+step "Tagge Datei..."
+tag_mkv "$OUT" "$TITLE" "$YEAR"
+ok "Tagging abgeschlossen."
+
+echo
+header "Fertig"
+RIP_SIZE=$(du -h "$MAIN" | cut -f1)
+NEW_SIZE=$(du -h "$OUT" | cut -f1)
+echo "  Rip (temp): $RIP_SIZE  ->  Neu: $NEW_SIZE"
+echo "  Datei:      $OUT"
+echo
+
+read -rp "Temporaeren Rip loeschen ($RIP_DIR)? (j/N): " DEL
+if [[ "$DEL" =~ ^[jJ]$ ]]; then
+  rm -rf "$RIP_DIR"
+  ok "Temporaerer Rip geloescht."
+else
+  KEEP_RIP=1
+  info "Temporaerer Rip bleibt erhalten: $RIP_DIR"
+fi

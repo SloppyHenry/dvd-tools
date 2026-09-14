@@ -1,0 +1,5 @@
+# Kopieren nach ~/.config/dvd-tools/config
+#
+# TMDB-API-Key fuer die automatische Titelerkennung in dvd-auto.
+# Kostenlos erhaeltlich unter: https://www.themoviedb.org/settings/api
+TMDB_API_KEY=""
