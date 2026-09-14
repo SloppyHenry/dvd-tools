@@ -102,11 +102,14 @@ suggest_quality() {
   local file="$1"
   ffprobe -v error -select_streams v:0 \
     -show_entries stream=width,height,avg_frame_rate,bit_rate:stream_tags=BPS:format=duration,size,bit_rate \
-    -of json "$file" | python3 -c '
+    -of json "$file" 2>/dev/null | python3 -c '
 import json, sys
 
-d = json.load(sys.stdin)
-st = d["streams"][0]
+try:
+    d = json.load(sys.stdin)
+    st = d["streams"][0]
+except Exception:
+    sys.exit(1)
 fmt = d.get("format", {})
 
 width = int(st.get("width") or 0)
@@ -153,7 +156,7 @@ info = (
     f"Komplexitaet: {label} (bpp={bpp:.3f})"
 )
 print(f"{cq}\t{info}")
-'
+' 2>/dev/null
 }
 
 # ---------- Titelerkennung anhand des Disc-Labels ----------
