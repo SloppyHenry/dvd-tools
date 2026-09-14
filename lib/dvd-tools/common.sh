@@ -259,6 +259,58 @@ identify_from_label() {
   read -rp "TMDB-ID (optional): " TMDBID
 }
 
+# ---------- MakeMKV-Rip mit Live-Fortschritt (Prozent, MB/s, x-Faktor) ----------
+# Echte Laufwerks-RPM lassen sich unter Linux nicht ueber eine Standard-API
+# auslesen (kein Kernel-Interface dafuer) - stattdessen wird die uebliche
+# Kennzahl der optischen-Medien-Welt verwendet: der x-Faktor, berechnet aus
+# der tatsaechlich gemessenen Lesegeschwindigkeit (1x DVD = 1.32 MB/s).
+DVD_1X_BYTES_PER_SEC=1384448
+
+# makemkv_rip MK_INDEX RIP_DIR -> rippt mit Fortschrittsbalken, Rueckgabewert
+# ist der Exitcode von makemkvcon.
+makemkv_rip() {
+  local mk_index="$1" rip_dir="$2"
+  local log; log="$(mktemp)"
+  stdbuf -oL -eL makemkvcon -r --minlength=1200 mkv "disc:$mk_index" all "$rip_dir" \
+    > "$log" 2>&1 &
+  local pid=$!
+
+  local prev_bytes=0 prev_time cur_bytes cur_time dt db mbs xf pct_line pct
+  prev_time=$(date +%s.%N)
+  while kill -0 "$pid" 2>/dev/null; do
+    sleep 1
+    cur_bytes="$(du -sb "$rip_dir" 2>/dev/null | cut -f1)"
+    cur_bytes="${cur_bytes:-0}"
+    cur_time=$(date +%s.%N)
+    dt=$(awk -v a="$cur_time" -v b="$prev_time" 'BEGIN{print a-b}')
+    db=$((cur_bytes - prev_bytes))
+    read -r mbs xf <<<"$(awk -v b="$db" -v t="$dt" -v c="$DVD_1X_BYTES_PER_SEC" 'BEGIN{
+      mb = (t > 0 && b > 0) ? b/t/1048576 : 0
+      x  = (t > 0 && b > 0) ? b/t/c : 0
+      printf "%.1f %.1f", mb, x
+    }')"
+
+    pct=""
+    pct_line="$(grep -o 'PRGV:[0-9]*,[0-9]*,[0-9]*' "$log" | tail -1)"
+    if [ -n "$pct_line" ]; then
+      IFS=',' read -r _ total max <<<"${pct_line#PRGV:}"
+      if [[ "$max" =~ ^[0-9]+$ ]] && [ "$max" -gt 0 ]; then
+        pct=$(awk -v t="$total" -v m="$max" 'BEGIN{printf "%.1f", t*100/m}')
+      fi
+    fi
+    [ -n "$pct" ] && progress_bar "$pct" "Rippen (MakeMKV)  ${mbs} MB/s (~${xf}x)"
+
+    prev_bytes=$cur_bytes
+    prev_time=$cur_time
+  done
+  progress_done
+
+  wait "$pid"
+  local rc=$?
+  rm -f "$log"
+  return $rc
+}
+
 # ---------- HandBrake-Encode mit huebschem Fortschrittsbalken ----------
 # encode_to_hevc IN OUT QUALITY
 encode_to_hevc() {
@@ -276,8 +328,14 @@ encode_to_hevc() {
     --all-audio --audio-lang-list any --aencoder copy --audio-fallback ac3 \
     --all-subtitles \
     -m 2>&1 | while IFS= read -r line; do
-      if [[ "$line" =~ ([0-9]+\.[0-9]+)\ % ]]; then
-        progress_bar "${BASH_REMATCH[1]}" "Encoding (NVENC)"
+      if [[ "$line" =~ ([0-9]+\.[0-9]+)\ %(\ \(([0-9.]+)\ fps,\ avg\ ([0-9.]+)\ fps,\ ETA\ ([0-9hms]+)\))? ]]; then
+        pct="${BASH_REMATCH[1]}"
+        if [ -n "${BASH_REMATCH[3]:-}" ]; then
+          detail="Encoding (NVENC)  ${BASH_REMATCH[3]} fps (avg ${BASH_REMATCH[4]})  ETA ${BASH_REMATCH[5]}"
+        else
+          detail="Encoding (NVENC)"
+        fi
+        progress_bar "$pct" "$detail"
       fi
     done
   progress_done

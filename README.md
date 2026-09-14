@@ -34,50 +34,25 @@ Zwei Werkzeuge:
 - Kapitelmarken bleiben erhalten
 - Am Ende wird gefragt, ob die Ursprungsdatei/der temporäre Rip gelöscht
   werden soll — nichts wird automatisch gelöscht
+- **Live-Detailanzeige** statt stiller Fortschrittsbalken: beim Rippen
+  tatsächliche Lesegeschwindigkeit in MB/s und dem branchenüblichen
+  x-Faktor (z.B. „8.2x“, wie bei DVD-Brennern/-Laufwerken angegeben),
+  beim Encoding fps und ETA von HandBrake
 
 ## Voraussetzungen
 
-- Linux, Bash
+- Linux mit `apt` (Debian/Ubuntu) — `install.sh` löst alle Abhängigkeiten
+  automatisch auf, siehe [Installation](#installation)
+- Für NVENC-Encoding: eine NVIDIA-GPU mit NVENC-Unterstützung
+
+Ohne `apt` (andere Distributionen) manuell benötigt:
+
 - [HandBrakeCLI](https://handbrake.fr/) mit NVENC-Unterstützung
 - `mkvpropedit`, `mkvmerge` (Paket `mkvtoolnix`)
 - `ffprobe` (Paket `ffmpeg`)
 - `python3` (nur Standardbibliothek)
-- Für `dvd-auto` zusätzlich:
-  - `makemkvcon` (siehe [MakeMKV-Installation](#makemkv-installation))
-  - `eject`, `blkid`, `curl`
-  - eine NVIDIA-GPU mit NVENC-Unterstützung
-
-### Ubuntu/Debian
-
-```bash
-sudo apt install handbrake-cli mkvtoolnix ffmpeg python3
-```
-
-### MakeMKV-Installation
-
-MakeMKV besteht aus einem quelloffenen Teil (`makemkv-oss`) und einer
-proprietären Laufwerks-/Entschlüsselungsbibliothek (`makemkv-bin`), die nur
-als fertiges Binary von MakeMKV selbst verteilt wird. Ein Ubuntu-Paket gibt
-es nicht offiziell, daher wird aus den offiziellen Quellen gebaut:
-
-```bash
-sudo apt install build-essential pkg-config libc6-dev libssl-dev \
-  libexpat1-dev libavcodec-dev libavutil-dev zlib1g-dev
-
-curl -fSLO https://www.makemkv.com/download/makemkv-oss-1.18.4.tar.gz
-curl -fSLO https://www.makemkv.com/download/makemkv-bin-1.18.4.tar.gz
-tar xzf makemkv-oss-1.18.4.tar.gz && cd makemkv-oss-1.18.4
-./configure --disable-gui && make -j"$(nproc)" && sudo make install
-cd ..
-
-tar xzf makemkv-bin-1.18.4.tar.gz && cd makemkv-bin-1.18.4
-make   # fragt interaktiv nach Zustimmung zur MakeMKV-EULA
-sudo make install
-```
-
-Version ggf. an die aktuell auf makemkv.com verfügbare anpassen.
-MakeMKV ist kostenlos in der Beta-Phase nutzbar (rollierender Beta-Key)
-bzw. mit einer gekauften Lizenz.
+- Für `dvd-auto` zusätzlich: `makemkvcon` (siehe unten), `eject`, `blkid`,
+  `curl`
 
 ## Installation
 
@@ -87,9 +62,35 @@ cd dvd-tools
 ./install.sh
 ```
 
-Installiert nach `~/.local/bin` (die beiden Skripte) und
-`~/.local/lib/dvd-tools` (gemeinsame Funktionen). `~/.local/bin` muss in
-deinem `PATH` sein.
+`install.sh` erledigt automatisch:
+
+1. Installiert `handbrake-cli`, `mkvtoolnix`, `ffmpeg`, `python3`,
+   `eject`, `curl` sowie die Build-Abhängigkeiten für MakeMKV über `apt`
+2. Baut **MakeMKV** aus dem offiziellen Quellcode, falls `makemkvcon`
+   noch nicht vorhanden ist (siehe [Hintergrund](#warum-wird-makemkv-aus-dem-quellcode-gebaut))
+   — inklusive interaktiver Zustimmung zur MakeMKV-EULA beim ersten Mal
+3. Prüft, ob eine NVIDIA-GPU/Treiber vorhanden ist (Warnung, kein Abbruch,
+   falls nicht)
+4. Installiert `dvd-shrink`/`dvd-auto` nach `~/.local/bin` und die
+   gemeinsame Bibliothek nach `~/.local/lib/dvd-tools`
+
+`~/.local/bin` muss in deinem `PATH` sein — das Skript weist am Ende
+darauf hin, falls nicht.
+
+Andere MakeMKV-Version bauen: `MAKEMKV_VERSION=1.18.4 ./install.sh`
+
+### Warum wird MakeMKV aus dem Quellcode gebaut?
+
+MakeMKV besteht aus einem quelloffenen Teil (`makemkv-oss`) und einer
+proprietären Laufwerks-/Entschlüsselungsbibliothek (`makemkv-bin`), die nur
+als fertiges Binary von MakeMKV selbst verteilt wird. Ein natives
+Ubuntu-Paket gibt es nicht offiziell (nur ein Flatpak, das den
+Geräte-/USB-Zugriff sandboxt und für ein CLI-Tool wie `dvd-auto` unnötige
+Komplexität bedeutet) — daher baut `install.sh` aus den offiziellen
+Quellen: `makemkv-oss` wird kompiliert (`--disable-gui`, keine Qt-GUI
+nötig), `makemkv-bin` als offizielles Binärpaket installiert. MakeMKV ist
+kostenlos in der Beta-Phase nutzbar (rollierender Beta-Key) bzw. mit einer
+gekauften Lizenz.
 
 ### Optional: automatische Titelerkennung einrichten
 

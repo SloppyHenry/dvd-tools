@@ -129,18 +129,7 @@ step "Rippe Hauptfilm mit MakeMKV (das kann einige Minuten dauern)..."
 RIP_DIR="$TMP_ROOT/rip"
 mkdir -p "$RIP_DIR"
 
-makemkv -r --minlength=1200 mkv "disc:$MK_INDEX" all "$RIP_DIR" 2>&1 | while IFS= read -r line; do
-  if [[ "$line" == PRGV:* ]]; then
-    IFS=',' read -r cur total max <<<"${line#PRGV:}"
-    if [[ "$max" =~ ^[0-9]+$ ]] && [ "$max" -gt 0 ]; then
-      pct=$(python3 -c "print(f'{${total}*100/${max}:.1f}')" 2>/dev/null)
-      [ -n "$pct" ] && progress_bar "$pct" "Rippen (MakeMKV)"
-    fi
-  elif [[ "$line" == MSG:* ]]; then
-    :
-  fi
-done
-progress_done
+makemkv_rip "$MK_INDEX" "$RIP_DIR" || warn "MakeMKV meldete einen Fehlercode - pruefe unten, ob Titel entstanden sind."
 
 mapfile -t RIPPED < <(find "$RIP_DIR" -maxdepth 1 -iname "*.mkv" | sort)
 if [ "${#RIPPED[@]}" -eq 0 ]; then
