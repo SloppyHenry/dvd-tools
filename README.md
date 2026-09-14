@@ -61,9 +61,18 @@ Rueckmeldungen/Fixes von macOS-Nutzern sind willkommen.
 - Am Ende wird gefragt, ob die Ursprungsdatei/der temporäre Rip gelöscht
   werden soll — nichts wird automatisch gelöscht
 - **Live-Detailanzeige** statt stiller Fortschrittsbalken: beim Rippen
-  tatsächliche Lesegeschwindigkeit in MB/s und dem branchenüblichen
-  x-Faktor (z.B. „8.2x“, wie bei DVD-Brennern/-Laufwerken angegeben),
-  beim Encoding fps und ETA von HandBrake
+  geschriebene Datenmenge, tatsächliche Lesegeschwindigkeit in MB/s und der
+  branchenübliche x-Faktor (z.B. „8.2x“, wie bei DVD-Brennern/-Laufwerken
+  angegeben), beim Encoding fps und ETA von HandBrake. Die Zahlen stehen in
+  festen Spalten *vor* der MakeMKV-Statusmeldung — bei schmalen Terminals
+  wird also die Meldung gekürzt, nie die Geschwindigkeit.
+
+  Den Fortschritt in Prozent liefert MakeMKV selbst (`PRGV`), sofern die
+  installierte Version das beim `mkv`-Befehl tut; andernfalls wird er aus
+  dem Datenzuwachs gegen die Größe der Disc bzw. des ISO-Images geschätzt
+  (bei 99 % gedeckelt, da Menüs/kurze Titel nicht mitgerippt werden). Ist
+  beides nicht verfügbar (z.B. unter macOS ohne `blockdev`-Äquivalent),
+  läuft statt des Balkens ein Spinner mit denselben Detailzahlen.
 - **Automatische Wiederherstellung bei zerkratzten/beschädigten Discs**
   (`dvd-auto`): erkennt haengende/fehlschlagende Rips (kein Datenzuwachs
   ueber laengere Zeit) und eskaliert automatisch in drei Stufen:

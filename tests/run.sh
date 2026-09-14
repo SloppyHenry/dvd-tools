@@ -101,6 +101,27 @@ for cols in 40 80 120; do
   unset -f tput
 done
 
+# Der eigentliche Anzeigefehler war nicht die Ueberlaenge, sondern die
+# Reihenfolge: der variable MakeMKV-Statustext stand vor den Zahlen und hat
+# beim Kappen zuerst die Lesegeschwindigkeit gefressen ("2.7 MB/…").
+# Darum: Zahlen zuerst, Status zuletzt - hier abgesichert.
+echo "== Lesegeschwindigkeit ueberlebt das Kappen =="
+for cols in 60 80; do
+  tput() { [ "$1" = "cols" ] && echo "$cols" || command tput "$@" 2>/dev/null; }
+  LABEL="$(printf '%8s' "$(human_bytes 1932735283)") $(printf '%6.1f MB/s ~%4.1fx' 30.7 23.2)  1 Titel werden in Verzeichnis … gespeichert"
+  OUT=$(progress_bar 42.5 "$LABEL" 2>/dev/null | sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g' | tr -d '\r')
+  assert_contains "bei $cols Spalten bleibt MB/s + x-Faktor vollstaendig" "30.7 MB/s ~23.2x" "$OUT"
+  assert_contains "bei $cols Spalten bleibt die geschriebene Datenmenge" "1.8 GB" "$OUT"
+  unset -f tput
+done
+
+echo "== latest_status entfernt file://-Pfade =="
+STATUS_LOG="$(mktemp)"
+printf 'MSG:1005,0,1,"Saving 1 titles into directory file:///home/henry/Filme/.tmp/rip","%%1","x"\n' > "$STATUS_LOG"
+assert_eq "voller Pfad wird durch Ellipse ersetzt" \
+  "Saving 1 titles into directory …" "$(latest_status "$STATUS_LOG")"
+rm -f "$STATUS_LOG"
+
 echo
 echo "== Ergebnis: $PASS bestanden, $FAIL fehlgeschlagen =="
 [ "$FAIL" -eq 0 ]

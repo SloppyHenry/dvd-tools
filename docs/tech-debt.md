@@ -58,3 +58,17 @@ Fake-Tools während der Entwicklung abgedeckt, nicht durch eine dauerhafte
 Testsuite. Wurde bewusst nicht formalisiert — der Aufwand für robuste
 Fake-Tool-Fixtures stünde in keinem Verhältnis zum Nutzen bei einem Projekt
 dieser Größe.
+
+## Fortschritt in Prozent ist beim Rippen nur eine Schätzung
+
+**Priorität: niedrig**
+
+Liefert MakeMKV keine `PRGV`-Zeilen (bei 1.18.4 beim `mkv`-Befehl der Fall),
+schätzt `makemkv_rip` den Prozentwert aus dem Datenzuwachs im Zielverzeichnis
+gegen die Rohgröße der Disc (`blockdev --getsize64`) bzw. des ISO-Images.
+Gerippt werden aber nur Titel ab `--minlength=1200`, also nicht Menüs,
+Trailer und kurze Extras — der Balken bleibt am Ende deshalb unter 100 % und
+wird bei 99 % gedeckelt. Exakt wäre er nur mit einem vorgeschalteten
+`makemkvcon -r info`-Scan, der pro Lauf zusätzliche Disc-Zeit kostet; das
+wäre den Gewinn an Genauigkeit nicht wert. Unter macOS gibt es kein
+`blockdev`-Äquivalent, dort läuft bei `disc:`-Quellen weiterhin der Spinner.

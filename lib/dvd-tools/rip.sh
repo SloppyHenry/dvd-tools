@@ -7,10 +7,13 @@
 DVD_1X_BYTES_PER_SEC=1384448
 
 # Letzte lesbare Statuszeile aus dem robot-mode-Log (PRGC- oder MSG-Text).
+# Gibt den Text ungekappt zurueck - auf die Terminalbreite kappt erst die
+# Anzeige selbst (progress_bar/spinner_line), damit die Zahlenspalten davor
+# immer vollstaendig sichtbar bleiben.
 latest_status() {
   local log="$1"
   tail -n 80 "$log" 2>/dev/null | python3 -c '
-import sys, csv
+import sys, csv, re
 text = ""
 for raw in sys.stdin:
     raw = raw.strip()
@@ -28,13 +31,36 @@ for raw in sys.stdin:
                 text = f[3]
         except Exception:
             pass
-# Lange MakeMKV-Meldungen (z.B. volle file://-Pfade) hart kappen, sonst
-# ueberschreitet die Zeile die Terminalbreite, bricht um, und die
-# "\r"-basierte Live-Anzeige zeichnet danach nur noch teilweise/kaputt neu.
-if len(text) > 45:
-    text = text[:44] + "…"
-print(text)
+# MakeMKV schreibt volle file://-Pfade in seine Meldungen. Die sagen dem
+# Nutzer nichts, sind aber lang genug, um den Rest der Zeile zu verdraengen.
+text = re.sub(r"file://\S*", "…", text)
+print(" ".join(text.split()))
 ' 2>/dev/null
+}
+
+# human_bytes N -> "1.8 GB" / "742 MB", feste, kurze Darstellung.
+human_bytes() {
+  awk -v b="${1:-0}" 'BEGIN{
+    if (b >= 1073741824) printf "%.1f GB", b/1073741824
+    else                 printf "%d MB",   b/1048576
+  }'
+}
+
+# expected_rip_bytes SOURCE [DEVICE] -> grobe Zielgroesse des Rips in Bytes,
+# leer wenn nicht ermittelbar. Bei "iso:" die Dateigroesse, bei "disc:" die
+# Datengroesse der eingelegten Disc (Linux: blockdev). Das ist bewusst nur
+# eine Naeherung - gerippt werden nur Titel ab --minlength, Menues/Trailer
+# fallen weg - deshalb wird der daraus berechnete Prozentwert bei 99 %
+# gedeckelt und als "ca." ausgewiesen.
+expected_rip_bytes() {
+  local source="$1" dev="${2:-}"
+  case "$source" in
+    iso:*) file_size_bytes "${source#iso:}" ;;
+    *)
+      is_macos && return 0
+      [ -b "$dev" ] && blockdev --getsize64 "$dev" 2>/dev/null
+      ;;
+  esac
 }
 
 # makemkv_rip SOURCE RIP_DIR [STALL_TIMEOUT] -> rippt mit Live-Anzeige.
@@ -46,13 +72,18 @@ print(text)
 # unabhaengig davon, ob MakeMKV ueberhaupt PRGV-Prozentzeilen liefert -
 # manche Versionen tun das beim "mkv"-Befehl nicht.
 makemkv_rip() {
-  local source="$1" rip_dir="$2" stall_timeout="${3:-0}"
+  local source="$1" rip_dir="$2" stall_timeout="${3:-0}" drive="${4:-}"
   local log; log="$(mktemp)"
+  local expected; expected="$(expected_rip_bytes "$source" "$drive")"
+  [[ "$expected" =~ ^[0-9]+$ ]] || expected=0
   run_unbuffered makemkvcon -r --minlength=1200 mkv "$source" all "$rip_dir" \
     > "$log" 2>&1 &
   local pid=$!
 
   local prev_bytes=0 prev_time cur_bytes cur_time dt db mbs xf pct_line pct status label stalled_for=0
+  # Geglaetteter Mittelwert: die Sekunden-Momentanwerte schwanken stark
+  # (Laufwerks-Cache, Schreibpuffer), was die Anzeige sonst wild springen laesst.
+  local avg_mbs=0 avg_xf=0
   prev_time=$(now_seconds)
   while kill -0 "$pid" 2>/dev/null; do
     sleep 1
@@ -61,11 +92,16 @@ makemkv_rip() {
     cur_time=$(now_seconds)
     dt=$(awk -v a="$cur_time" -v b="$prev_time" 'BEGIN{print a-b}')
     db=$((cur_bytes - prev_bytes))
-    read -r mbs xf <<<"$(awk -v b="$db" -v t="$dt" -v c="$DVD_1X_BYTES_PER_SEC" 'BEGIN{
+    read -r mbs xf <<<"$(awk -v b="$db" -v t="$dt" -v c="$DVD_1X_BYTES_PER_SEC" \
+                             -v am="$avg_mbs" -v ax="$avg_xf" 'BEGIN{
       mb = (t > 0 && b > 0) ? b/t/1048576 : 0
       x  = (t > 0 && b > 0) ? b/t/c : 0
+      # exponentiell geglaettet (Gewicht 0.3 auf den neuen Messwert)
+      mb = (am > 0) ? am + 0.3*(mb - am) : mb
+      x  = (ax > 0) ? ax + 0.3*(x  - ax) : x
       printf "%.1f %.1f", mb, x
     }')"
+    avg_mbs="$mbs"; avg_xf="$xf"
 
     if [ "$db" -le 0 ]; then
       stalled_for=$((stalled_for + 1))
@@ -82,6 +118,9 @@ makemkv_rip() {
 
     status="$(latest_status "$log")"
 
+    # Fortschritt: bevorzugt MakeMKVs eigene PRGV-Zeilen. Die liefert aber
+    # nicht jede MakeMKV-Version beim "mkv"-Befehl - dann wird ersatzweise
+    # aus dem Datenzuwachs gegen die Disc-/ISO-Groesse geschaetzt.
     pct=""
     pct_line="$(grep -o 'PRGV:[0-9]*,[0-9]*,[0-9]*' "$log" | tail -1)"
     if [ -n "$pct_line" ]; then
@@ -90,17 +129,28 @@ makemkv_rip() {
         pct=$(awk -v t="$total" -v m="$max" 'BEGIN{printf "%.1f", t*100/m}')
       fi
     fi
-
-    label="Rippen (MakeMKV)"
-    [ -n "$status" ] && label="$label — $status"
-    if awk -v m="$mbs" 'BEGIN{exit !(m+0>0)}'; then
-      label="$label  ${mbs} MB/s (~${xf}x)"
+    if [ -z "$pct" ] && [ "$expected" -gt 0 ]; then
+      pct=$(awk -v b="$cur_bytes" -v e="$expected" 'BEGIN{
+        p = b*100/e; if (p > 99) p = 99; printf "%.1f", p
+      }')
     fi
+
+    # Feste Zahlenspalten ZUERST, variabler MakeMKV-Text ZULETZT: gekappt wird
+    # immer von rechts, also faellt im Zweifel nur die Statusmeldung weg und
+    # nie die Geschwindigkeit. Feste Feldbreiten verhindern ausserdem, dass
+    # die Spalten jede Sekunde verspringen.
+    label="$(printf '%8s' "$(human_bytes "$cur_bytes")")"
+    if awk -v m="$mbs" 'BEGIN{exit !(m+0>0)}'; then
+      label="$label $(printf '%6.1f MB/s ~%4.1fx' "$mbs" "$xf")"
+    else
+      label="$label $(printf '%18s' '')"
+    fi
+    [ -n "$status" ] && label="$label  $status"
 
     if [ -n "$pct" ]; then
       progress_bar "$pct" "$label"
     else
-      spinner_line "$label"
+      spinner_line "Rippen  $label"
     fi
 
     prev_bytes=$cur_bytes
@@ -159,7 +209,7 @@ rescue_image_disc() {
 rip_main_feature() {
   local mk_index="$1" drive="$2" rip_dir="$3"
 
-  if makemkv_rip "disc:$mk_index" "$rip_dir" 240; then
+  if makemkv_rip "disc:$mk_index" "$rip_dir" 240 "$drive"; then
     return 0
   fi
   warn "Rippen haengt oder schlaegt fehl (vermutlich Lesefehler)."
@@ -172,7 +222,7 @@ rip_main_feature() {
     set_drive_speed "$drive" 4
     sleep 2
 
-    if makemkv_rip "disc:$mk_index" "$rip_dir" 300; then
+    if makemkv_rip "disc:$mk_index" "$rip_dir" 300 "$drive"; then
       ok "Rip bei gedrosselter Geschwindigkeit erfolgreich."
       set_drive_speed "$drive" 0
       return 0

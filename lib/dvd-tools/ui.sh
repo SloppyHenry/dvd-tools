@@ -46,21 +46,30 @@ truncate_text() {
 }
 
 progress_bar() {
-  local pct="$1" label="${2:-}" width=20
+  local pct="$1" label="${2:-}"
   [ -z "$pct" ] && return
+  # Balkenbreite an die Terminalbreite anpassen: auf schmalen Terminals hat
+  # der Nutzer mehr von Geschwindigkeit/Status als von einem breiten Balken.
+  local term_width; term_width=$(term_cols)
+  local width=20
+  [ "$term_width" -lt 70 ] && width=10
+  [ "$term_width" -lt 50 ] && width=6
   local filled=$(( ${pct%.*} * width / 100 ))
   [ "$filled" -gt "$width" ] && filled=$width
   [ "$filled" -lt 0 ] && filled=0
   local empty=$((width - filled))
-  # Fixer Anteil (Einrueckung, Balken, Prozent) ist ca. 45 Zeichen -
-  # den Rest darf "label" maximal einnehmen, sonst wird gekappt.
-  local max_label=$(( $(term_cols) - width - 15 ))
+  # Fixer Anteil: "  [" (3) + Balken + "] " (2) + Prozent (6) + "  " (2)
+  # = 13 + width. Ein Zeichen Reserve, damit die Zeile nie exakt bis zur
+  # letzten Spalte reicht (manche Terminals brechen dann schon um).
+  local max_label=$(( term_width - width - 14 ))
   [ "$max_label" -lt 3 ] && max_label=3
   label="$(truncate_text "$label" "$max_label")"
   printf "\r\033[K  ${C_GREEN}["
-  printf '%0.s#' $(seq 1 "$filled") 2>/dev/null
+  # "printf FMT" ohne Argumente laeuft das Format trotzdem einmal ab - bei
+  # filled/empty = 0 gaebe das ein Zeichen zu viel, daher explizit pruefen.
+  [ "$filled" -gt 0 ] && printf '%0.s#' $(seq 1 "$filled") 2>/dev/null
   printf "${C_RESET}${C_DIM}"
-  printf '%0.s.' $(seq 1 "$empty") 2>/dev/null
+  [ "$empty" -gt 0 ] && printf '%0.s.' $(seq 1 "$empty") 2>/dev/null
   printf "${C_RESET}] %5.1f%%  %s" "$pct" "$label"
 }
 progress_done() { echo; }
