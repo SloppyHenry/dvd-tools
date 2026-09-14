@@ -11,6 +11,9 @@ source "$LIB_DIR/common.sh"
 
 DIR="${1:-${DVD_TOOLS_OUTPUT_DIR:-$PWD}}"
 DEFAULT_QUALITY=19
+# Gesamtzahl der Phasen fuer die Schrittnummerierung in step().
+# shellcheck disable=SC2034  # von step() in ui.sh gelesen
+STEP_TOTAL=4
 
 need HandBrakeCLI
 need mkvpropedit
@@ -18,10 +21,11 @@ need mkvmerge
 need ffprobe
 need python3
 
-header "dvd-shrink"
-info "Suche MKV-Dateien in: $DIR"
+header "dvd-shrink" "Vorhandenen Rip verkleinern und sauber ablegen"
 echo
+kv "Ordner" "$DIR"
 
+step "Datei waehlen"
 mapfile -t FILES < <(find "$DIR" -maxdepth 1 -type f -iname "*.mkv" | sort)
 
 if [ "${#FILES[@]}" -eq 0 ]; then
@@ -29,44 +33,40 @@ if [ "${#FILES[@]}" -eq 0 ]; then
   exit 1
 fi
 
-echo "Vorhandene Dateien:"
+info "Gefundene Dateien:"
 for i in "${!FILES[@]}"; do
-  size=$(du -h "${FILES[$i]}" | cut -f1)
-  printf "  [%2d] %-60s %8s\n" "$((i+1))" "$(basename "${FILES[$i]}")" "$size"
+  menu_item "$((i+1))" "$(basename "${FILES[$i]}")" \
+    "$(printf '%8s' "$(human_bytes "$(file_size_bytes "${FILES[$i]}")")")"
 done
 echo
 
-read -rp "Welche Datei soll verarbeitet werden? (Nummer): " CHOICE
+ask CHOICE "Welche Datei soll verarbeitet werden?" "1"
 if ! [[ "$CHOICE" =~ ^[0-9]+$ ]] || [ "$CHOICE" -lt 1 ] || [ "$CHOICE" -gt "${#FILES[@]}" ]; then
   err "Ungueltige Auswahl."
   exit 1
 fi
 IN="${FILES[$((CHOICE-1))]}"
-ok "Ausgewaehlt: $(basename "$IN")"
-echo
+IN_SIZE="$(file_size_bytes "$IN")"
+ok "Ausgewaehlt: $(basename "$IN") ($(human_bytes "$IN_SIZE"))"
 
-read -rp "Filmtitel (z.B. 'The Green Mile'): " TITLE
+step "Film benennen"
+ask TITLE "Filmtitel (z.B. 'The Green Mile')"
 [ -z "$TITLE" ] && { err "Titel darf nicht leer sein."; exit 1; }
+ask YEAR "Erscheinungsjahr (optional)"
+ask TMDBID "TMDB-ID (optional)"
 
-read -rp "Erscheinungsjahr (optional, Enter zum Ueberspringen): " YEAR
-read -rp "TMDB-ID (optional, Enter zum Ueberspringen): " TMDBID
-
-echo
-step "Analysiere Quelldatei..."
+step "Quelldatei analysieren"
 SUGGESTION="$(suggest_quality "$IN")"
 SUGGESTED_CQ="$(cut -f1 <<<"$SUGGESTION")"
 ANALYSIS_INFO="$(cut -f2 <<<"$SUGGESTION")"
 if [[ "$SUGGESTED_CQ" =~ ^[0-9]+$ ]]; then
   info "$ANALYSIS_INFO"
-  info "-> Vorschlag: CQ $SUGGESTED_CQ"
 else
   warn "Analyse fehlgeschlagen, verwende Standardwert."
   SUGGESTED_CQ="$DEFAULT_QUALITY"
 fi
 echo
-
-read -rp "Qualitaet CQ [kleiner=besser/groesser] (Enter fuer Vorschlag $SUGGESTED_CQ): " QUALITY
-QUALITY="${QUALITY:-$SUGGESTED_CQ}"
+ask QUALITY "Qualitaet CQ (kleiner = besser)" "$SUGGESTED_CQ"
 if ! [[ "$QUALITY" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
   err "Ungueltiger Qualitaetswert."
   exit 1
@@ -78,43 +78,33 @@ OUT="${OUT_FOLDER}/${SAFE_BASENAME}.mkv"
 
 if [ -e "$OUT" ]; then
   warn "Zieldatei existiert bereits: $OUT"
-  read -rp "Ueberschreiben? (j/N): " OVERWRITE
-  [[ "$OVERWRITE" =~ ^[jJ]$ ]] || { echo "Abgebrochen."; exit 1; }
+  confirm "Ueberschreiben?" || { info "Abgebrochen."; exit 1; }
 fi
 mkdir -p "$OUT_FOLDER"
-
-echo
-hr
-echo "  Quelle:  $(basename "$IN")"
-echo "  Ziel:    $OUT"
 DETECTED_ENCODER="$(pick_hevc_encoder)"
-echo "  Encoder: $DETECTED_ENCODER, CQ $QUALITY"
-echo "  Audio:   alle Spuren, unveraendert (Copy)"
-echo "  Subs:    alle Spuren"
+
+step "Encoding (HandBrakeCLI)"
+hr
+kv "Quelle" "$(basename "$IN")"
+kv "Ziel" "$OUT"
+kv "Encoder" "$DETECTED_ENCODER ${G_DOT} CQ $QUALITY"
+kv "Spuren" "alle Ton-/Untertitelspuren unveraendert (Copy)"
 hr
 echo
-read -rp "Starten? (j/N): " CONFIRM
-[[ "$CONFIRM" =~ ^[jJ]$ ]] || { echo "Abgebrochen."; exit 1; }
-
+confirm "Starten?" || { info "Abgebrochen."; exit 1; }
 echo
-step "Encoding laeuft (HandBrakeCLI, $DETECTED_ENCODER)..."
 encode_to_hevc "$IN" "$OUT" "$QUALITY"
 ok "Encoding abgeschlossen."
-
-step "Tagge Datei..."
 tag_mkv "$OUT" "$TITLE" "$YEAR"
 ok "Tagging abgeschlossen."
 
+header "Fertig" "$TITLE${YEAR:+ ($YEAR)}"
 echo
-header "Fertig"
-OLD_SIZE=$(du -h "$IN" | cut -f1)
-NEW_SIZE=$(du -h "$OUT" | cut -f1)
-echo "  Original: $OLD_SIZE  ->  Neu: $NEW_SIZE"
-echo "  Datei:    $OUT"
+kv "Groesse" "$(size_summary "$IN_SIZE" "$(file_size_bytes "$OUT")")"
+kv_full "Datei" "$OUT"
 echo
 
-read -rp "Original-Datei '$(basename "$IN")' loeschen? (j/N): " DEL
-if [[ "$DEL" =~ ^[jJ]$ ]]; then
+if confirm "Original-Datei '$(basename "$IN")' loeschen?"; then
   rm -f "$IN"
   ok "Original geloescht."
 else

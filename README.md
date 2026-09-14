@@ -57,6 +57,12 @@ Rueckmeldungen/Fixes von macOS-Nutzern sind willkommen.
   Titel (Jahr) [tmdbid-ID]/Titel (Jahr) [tmdbid-ID].mkv
   ```
   kompatibel mit Jellyfin, Plex, Radarr, Kodi etc.
+- **Aufgeräumte Oberfläche**: nummerierte Phasen (`▶ 3/8 Disc rippen`), damit
+  während eines langen Laufs klar ist, wo man steht; gerahmte Kopf- und
+  Abschlusszeile, ausgerichtete Wertetabellen und am Ende der tatsächliche
+  Platzgewinn (`4.3 GB → 1.6 GB (-63 %)`). Farben werden abgeschaltet, wenn
+  die Ausgabe in eine Datei/Pipe geht oder `NO_COLOR` gesetzt ist; ohne
+  UTF-8-Terminal wird automatisch auf ASCII-Zeichen umgestellt.
 - Kapitelmarken bleiben erhalten
 - Am Ende wird gefragt, ob die Ursprungsdatei/der temporäre Rip gelöscht
   werden soll — nichts wird automatisch gelöscht

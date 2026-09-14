@@ -26,6 +26,10 @@ else
   need eject
 fi
 
+# Gesamtzahl der Phasen fuer die Schrittnummerierung in step().
+# shellcheck disable=SC2034  # von step() in ui.sh gelesen
+STEP_TOTAL=8
+
 makemkv() { run_unbuffered makemkvcon "$@"; }
 
 # Listet aktive optische Laufwerke: "index\tdevice\tlabel\tname"
@@ -68,11 +72,12 @@ KEEP_RIP=0
 cleanup() { [ "$KEEP_RIP" -eq 1 ] || rm -rf "$TMP_ROOT"; }
 trap cleanup EXIT
 
-header "dvd-auto"
-info "Ausgabeordner: $OUT_DIR"
+header "dvd-auto" "DVD rippen, verkleinern und sauber ablegen"
 echo
+kv "Ausgabe" "$OUT_DIR"
 
 # ---------- Laufwerk waehlen ----------
+step "Laufwerk suchen"
 mapfile -t DRIVES < <(list_drives)
 if [ "${#DRIVES[@]}" -eq 0 ]; then
   err "Kein optisches Laufwerk gefunden."
@@ -92,21 +97,32 @@ elif [ "${#DRIVES[@]}" -eq 1 ]; then
   MK_INDEX="$(cut -f1 <<<"$CHOSEN_ROW")"
   DRIVE="$(cut -f2 <<<"$CHOSEN_ROW")"
 else
-  echo "Mehrere Laufwerke gefunden:"
+  info "Mehrere Laufwerke gefunden:"
+  # Vorauswahl ist das erste Laufwerk mit eingelegter Disc - liegt die DVD
+  # schon drin, ist Enter dann die richtige Antwort. Sonst das erste.
+  DEFAULT_CHOICE=1
+  FOUND_DISC=0
   for i in "${!DRIVES[@]}"; do
-    printf "  [%d] %s\n" "$((i+1))" "$(describe_drive "${DRIVES[$i]}")"
+    if [ "$FOUND_DISC" -eq 0 ] && [ -n "$(cut -f3 <<<"${DRIVES[$i]}")" ]; then
+      DEFAULT_CHOICE=$((i+1)); FOUND_DISC=1
+    fi
+    menu_item "$((i+1))" "$(describe_drive "${DRIVES[$i]}")"
   done
-  read -rp "Welches Laufwerk verwenden? (Nummer): " DCHOICE
+  echo
+  ask DCHOICE "Welches Laufwerk verwenden?" "$DEFAULT_CHOICE"
+  if ! [[ "$DCHOICE" =~ ^[0-9]+$ ]] || [ "$DCHOICE" -lt 1 ] || [ "$DCHOICE" -gt "${#DRIVES[@]}" ]; then
+    err "Ungueltige Auswahl."
+    exit 1
+  fi
   CHOSEN_ROW="${DRIVES[$((DCHOICE-1))]}"
   MK_INDEX="$(cut -f1 <<<"$CHOSEN_ROW")"
   DRIVE="$(cut -f2 <<<"$CHOSEN_ROW")"
 fi
-ok "Verwende Laufwerk: $(describe_drive "$CHOSEN_ROW")"
-echo
+ok "Laufwerk: $(describe_drive "$CHOSEN_ROW")"
 
 # ---------- Auf Disc warten ----------
-echo
-step "Bitte DVD jetzt in $DRIVE einlegen..."
+step "Auf Disc warten"
+info "Bitte DVD jetzt in $DRIVE einlegen."
 # Nutzt MakeMKVs eigene Laufwerksliste statt "blkid" (Linux-spezifisch,
 # gibt es unter macOS nicht) - funktioniert dadurch auf beiden Plattformen
 # identisch.
@@ -114,14 +130,14 @@ DISC_LABEL=""
 while true; do
   DISC_LABEL="$(list_drives | awk -F'\t' -v d="$DRIVE" '$2==d{print $3}')"
   [ -n "$DISC_LABEL" ] && break
-  printf "\r  ${C_DIM}warte auf Disc...${C_RESET}"
+  spinner_line "warte auf Disc in $DRIVE ..."
   sleep 2
 done
-echo
+progress_done
 ok "Disc erkannt: $DISC_LABEL"
 
 # ---------- Titel automatisch erkennen (setzt TITLE/YEAR/TMDBID) ----------
-echo
+step "Film bestimmen"
 identify_from_label "$DISC_LABEL"
 [ -z "$TITLE" ] && { err "Titel darf nicht leer sein."; exit 1; }
 
@@ -130,13 +146,12 @@ OUT_FOLDER="${OUT_DIR}/${SAFE_BASENAME}"
 OUT="${OUT_FOLDER}/${SAFE_BASENAME}.mkv"
 if [ -e "$OUT" ]; then
   warn "Zieldatei existiert bereits: $OUT"
-  read -rp "Ueberschreiben? (j/N): " OVERWRITE
-  [[ "$OVERWRITE" =~ ^[jJ]$ ]] || { echo "Abgebrochen."; exit 1; }
+  confirm "Ueberschreiben?" || { info "Abgebrochen."; exit 1; }
 fi
 
 # ---------- Rippen ----------
-echo
-step "Rippe Hauptfilm mit MakeMKV (das kann einige Minuten dauern)..."
+step "Disc rippen (MakeMKV)"
+info "Das kann je nach Disc und Laufwerk einige Minuten dauern."
 RIP_DIR="$TMP_ROOT/rip"
 mkdir -p "$RIP_DIR"
 
@@ -155,13 +170,12 @@ for f in "${RIPPED[@]}"; do
   sz=$(file_size_bytes "$f")
   if [ "$sz" -gt "$MAIN_SIZE" ]; then MAIN="$f"; MAIN_SIZE=$sz; fi
 done
-ok "Hauptfilm erkannt: $(basename "$MAIN") ($(du -h "$MAIN" | cut -f1))"
+ok "Hauptfilm: $(basename "$MAIN") ($(human_bytes "$MAIN_SIZE"))"
 if [ "${#RIPPED[@]}" -gt 1 ]; then
   info "$(( ${#RIPPED[@]} - 1 )) weitere Titel (vermutlich Extras) bleiben unangetastet in: $RIP_DIR"
 fi
 
-echo
-step "Werfe Disc aus..."
+step "Disc auswerfen"
 if eject_disc "$DRIVE"; then
   ok "Disc ausgeworfen."
 else
@@ -169,51 +183,47 @@ else
 fi
 
 # ---------- Qualitaet ermitteln ----------
-echo
-step "Analysiere Rip..."
+step "Rip analysieren"
 SUGGESTION="$(suggest_quality "$MAIN")"
 SUGGESTED_CQ="$(cut -f1 <<<"$SUGGESTION")"
 ANALYSIS_INFO="$(cut -f2 <<<"$SUGGESTION")"
 if [[ "$SUGGESTED_CQ" =~ ^[0-9]+$ ]]; then
   info "$ANALYSIS_INFO"
-  info "-> Vorschlag: CQ $SUGGESTED_CQ"
 else
   warn "Analyse fehlgeschlagen, verwende Standardwert."
   SUGGESTED_CQ="$DEFAULT_QUALITY"
 fi
 echo
-read -rp "Qualitaet CQ (Enter fuer Vorschlag $SUGGESTED_CQ): " QUALITY
-QUALITY="${QUALITY:-$SUGGESTED_CQ}"
+ask QUALITY "Qualitaet CQ (kleiner = besser)" "$SUGGESTED_CQ"
+if ! [[ "$QUALITY" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+  err "Ungueltiger Qualitaetswert."
+  exit 1
+fi
 
 mkdir -p "$OUT_FOLDER"
-
-echo
-hr
-echo "  Rip:     $(basename "$MAIN")"
-echo "  Ziel:    $OUT"
 DETECTED_ENCODER="$(pick_hevc_encoder)"
-echo "  Encoder: $DETECTED_ENCODER, CQ $QUALITY"
-hr
-echo
 
-step "Encoding laeuft (HandBrakeCLI, $DETECTED_ENCODER)..."
+step "Encoding (HandBrakeCLI)"
+hr
+kv "Quelle" "$(basename "$MAIN")"
+kv "Ziel" "$OUT"
+kv "Encoder" "$DETECTED_ENCODER ${G_DOT} CQ $QUALITY"
+kv "Spuren" "alle Ton-/Untertitelspuren unveraendert (Copy)"
+hr
 encode_to_hevc "$MAIN" "$OUT" "$QUALITY"
 ok "Encoding abgeschlossen."
 
-step "Tagge Datei..."
+step "Datei taggen"
 tag_mkv "$OUT" "$TITLE" "$YEAR"
 ok "Tagging abgeschlossen."
 
+header "Fertig" "$TITLE${YEAR:+ ($YEAR)}"
 echo
-header "Fertig"
-RIP_SIZE=$(du -h "$MAIN" | cut -f1)
-NEW_SIZE=$(du -h "$OUT" | cut -f1)
-echo "  Rip (temp): $RIP_SIZE  ->  Neu: $NEW_SIZE"
-echo "  Datei:      $OUT"
+kv "Groesse" "$(size_summary "$MAIN_SIZE" "$(file_size_bytes "$OUT")")"
+kv_full "Datei" "$OUT"
 echo
 
-read -rp "Temporaeren Rip loeschen ($RIP_DIR)? (j/N): " DEL
-if [[ "$DEL" =~ ^[jJ]$ ]]; then
+if confirm "Temporaeren Rip loeschen ($RIP_DIR)?"; then
   rm -rf "$RIP_DIR"
   ok "Temporaerer Rip geloescht."
 else

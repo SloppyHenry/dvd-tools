@@ -11,7 +11,8 @@ bin/dvd-shrink                  vorhandenen Rip verkleinern (interaktiv)
 bin/dvd-auto                    DVD einlegen -> rippen -> verkleinern -> benennen
 lib/dvd-tools/common.sh         duenner Loader, sourced die Module unten
 lib/dvd-tools/platform.sh       Linux/macOS-Abstraktion, GPU-/Encoder-Erkennung
-lib/dvd-tools/ui.sh             Farben, Fortschrittsbalken/Spinner, Terminalbreite
+lib/dvd-tools/ui.sh             Darstellungsschicht: Farben/Glyphen, Rahmen, Schritte,
+                                Prompts, Fortschrittsbalken/Spinner, Groessenformate
 lib/dvd-tools/naming.sh         Namensschema, XML-Tagging
 lib/dvd-tools/quality.sh        CQ-Qualitaets-Heuristik
 lib/dvd-tools/identify.sh       Disc-Label-Bereinigung, TMDB-Suche
@@ -54,9 +55,21 @@ Kein echter Disc-Zugriff nötig, um die Steuerlogik zu verifizieren.
   `date`/`readlink`/`stat`/`du`/`stdbuf` direkt mit GNU-Flags aufzurufen.
 - Encoder-Wahl ist immer dynamisch (`pick_hevc_encoder`) — nie einen
   Encoder-Namen hartkodieren, auch nicht testweise.
-- Neue Live-Anzeigen (Fortschritt/Status) über `progress_bar`/`spinner_line`
-  in `common.sh`, nicht eigene `printf "\r..."`-Logik — die beiden kappen
-  bereits korrekt auf die Terminalbreite.
+- **Jede** Terminalausgabe läuft über `ui.sh`, nie über nacktes `echo`/`printf`
+  oder `read -rp`. Vorhanden sind: `header`, `step`/`substep`, `info`, `ok`,
+  `warn`, `err`, `kv`/`kv_full`, `menu_item`, `hr`, `ask`, `confirm`,
+  `progress_bar`/`spinner_line`, `human_bytes`, `size_summary`. Nur so bleibt
+  das Erscheinungsbild einheitlich und die Fallbacks (kein Farbterminal,
+  `NO_COLOR`, kein UTF-8) greifen überall.
+- Live-Anzeigen (Fortschritt/Status) ausschließlich über `progress_bar`/
+  `spinner_line`, nicht eigene `printf "\r..."`-Logik — die beiden kappen
+  bereits korrekt auf die Terminalbreite. In der Label-Zeile stehen feste
+  Zahlenspalten **vor** variablem Text, damit beim Kappen nie die Messwerte
+  wegfallen.
+- `step` nummeriert automatisch anhand von `STEP_TOTAL` (im jeweiligen Tool
+  gesetzt). Kommt eine Phase dazu, muss `STEP_TOTAL` mitwachsen.
+- Neue Glyphen immer als `G_*`-Paar (UTF-8 + ASCII) im Kopf von `ui.sh`
+  definieren, nie direkt im Code — sonst bricht der ASCII-Fallback.
 - Namensschema für Ausgabedateien ist fest:
   `Titel (Jahr) [tmdbid-ID]/Titel (Jahr) [tmdbid-ID].mkv` (Jahr/ID optional),
   erzeugt über `build_basename` — nicht von Hand zusammenbauen.

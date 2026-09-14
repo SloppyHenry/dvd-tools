@@ -38,14 +38,6 @@ print(" ".join(text.split()))
 ' 2>/dev/null
 }
 
-# human_bytes N -> "1.8 GB" / "742 MB", feste, kurze Darstellung.
-human_bytes() {
-  awk -v b="${1:-0}" 'BEGIN{
-    if (b >= 1073741824) printf "%.1f GB", b/1073741824
-    else                 printf "%d MB",   b/1048576
-  }'
-}
-
 # expected_rip_bytes SOURCE [DEVICE] -> grobe Zielgroesse des Rips in Bytes,
 # leer wenn nicht ermittelbar. Bei "iso:" die Dateigroesse, bei "disc:" die
 # Datengroesse der eingelegten Disc (Linux: blockdev). Das ist bewusst nur
@@ -186,10 +178,10 @@ rescue_image_disc() {
   local mapfile="${iso}.map"
   need ddrescue
 
-  step "ddrescue Durchlauf 1/2 (schnell, ueberspringt kaputte Stellen)..."
+  substep "ddrescue Durchlauf 1/2 (schnell, ueberspringt kaputte Stellen)..."
   ddrescue -n -b 2048 "$drive" "$iso" "$mapfile"
 
-  step "ddrescue Durchlauf 2/2 (gezielte Retries nur auf den kaputten Stellen - kann dauern)..."
+  substep "ddrescue Durchlauf 2/2 (gezielte Retries nur auf den kaputten Stellen - kann dauern)..."
   ddrescue -d -r3 -b 2048 "$drive" "$iso" "$mapfile"
 
   if command -v ddrescuelog >/dev/null 2>&1; then

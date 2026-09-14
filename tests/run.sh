@@ -92,7 +92,8 @@ echo "== progress_bar / spinner_line ueberschreiten nie die Terminalbreite =="
 LONG="Rippen (MakeMKV) — 1 Titel werden in Verzeichnis file:///tmp/dvd-auto.vpOkIm/rip gespeichert   30.7 MB/s (~23.2x)"
 for cols in 40 80 120; do
   tput() { [ "$1" = "cols" ] && echo "$cols" || command tput "$@" 2>/dev/null; }
-  LEN=$(progress_bar 42.5 "$LONG" 2>/dev/null | sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g' | tr -d '\r' | awk '{print length}')
+  LEN=$(progress_bar 42.5 "$LONG" 2>/dev/null | sed -r 's/\x1b\[[0-9;]*[a-zA-Z]//g' | tr -d '\r' \
+          | python3 -c 'import sys; print(len(sys.stdin.read().rstrip("\n")))')
   if [ "$LEN" -le "$cols" ]; then
     PASS=$((PASS + 1)); echo "  ok  - progress_bar bei $cols Spalten passt ($LEN Zeichen)"
   else

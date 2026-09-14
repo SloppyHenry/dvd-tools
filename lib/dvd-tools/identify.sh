@@ -54,14 +54,13 @@ identify_from_label() {
 
   if [ -z "${TMDB_API_KEY:-}" ]; then
     warn "Keine TMDB_API_KEY gesetzt (siehe README) - automatische Erkennung uebersprungen."
-    read -rp "Filmtitel (Vorschlag: '$guess'): " TITLE
-    TITLE="${TITLE:-$guess}"
-    read -rp "Erscheinungsjahr (optional): " YEAR
-    read -rp "TMDB-ID (optional): " TMDBID
+    ask TITLE "Filmtitel" "$guess"
+    ask YEAR "Erscheinungsjahr (optional)"
+    ask TMDBID "TMDB-ID (optional)"
     return
   fi
 
-  step "Suche \"$guess\" bei TMDB..."
+  substep "Suche \"$guess\" bei TMDB ..."
   mapfile -t CANDIDATES < <(tmdb_search "$guess")
 
   if [ "${#CANDIDATES[@]}" -gt 0 ]; then
@@ -73,7 +72,11 @@ identify_from_label() {
 
     if python3 -c "import sys; sys.exit(0 if float(sys.argv[1]) >= 0.72 else 1)" "$sim"; then
       ok "Erkannt: $top_title ($top_year) [tmdbid-$top_id]"
-      read -rp "Uebernehmen? (J/n): " CONFIRM_GUESS
+      # Hier ist Ja die Vorgabe (anders als bei confirm()): der Treffer gilt
+      # als sicher genug, Enter soll ihn uebernehmen.
+      printf ' %s%s%s Uebernehmen? %s[J/n]%s ' \
+        "$C_BLUE" "$G_ASK" "$C_RESET" "$C_DIM" "$C_RESET" >&2
+      read -r CONFIRM_GUESS
       if ! [[ "$CONFIRM_GUESS" =~ ^[nN]$ ]]; then
         TITLE="$top_title"; YEAR="$top_year"; TMDBID="$top_id"
         return
@@ -82,12 +85,14 @@ identify_from_label() {
   fi
 
   if [ "${#CANDIDATES[@]}" -gt 0 ]; then
-    echo "Unsicher - mehrere moegliche Treffer fuer \"$guess\":"
+    warn "Unsicher - mehrere moegliche Treffer fuer \"$guess\":"
     for i in "${!CANDIDATES[@]}"; do
-      printf "  [%d] %s (%s)\n" "$((i+1))" "$(cut -f2 <<<"${CANDIDATES[$i]}")" "$(cut -f3 <<<"${CANDIDATES[$i]}")"
+      menu_item "$((i+1))" "$(cut -f2 <<<"${CANDIDATES[$i]}")" \
+        "$(cut -f3 <<<"${CANDIDATES[$i]}")"
     done
-    echo "  [0] Manuell eingeben"
-    read -rp "Auswahl: " PICK
+    menu_item "0" "Manuell eingeben"
+    echo
+    ask PICK "Auswahl" "1"
     if [[ "$PICK" =~ ^[0-9]+$ ]] && [ "$PICK" -ge 1 ] && [ "$PICK" -le "${#CANDIDATES[@]}" ]; then
       local row="${CANDIDATES[$((PICK-1))]}"
       TMDBID="$(cut -f1 <<<"$row")"; TITLE="$(cut -f2 <<<"$row")"; YEAR="$(cut -f3 <<<"$row")"
@@ -97,9 +102,8 @@ identify_from_label() {
     warn "Keine TMDB-Treffer fuer \"$guess\"."
   fi
 
-  read -rp "Filmtitel (Vorschlag: '$guess'): " TITLE
-  TITLE="${TITLE:-$guess}"
-  read -rp "Erscheinungsjahr (optional): " YEAR
-  read -rp "TMDB-ID (optional): " TMDBID
+  ask TITLE "Filmtitel" "$guess"
+  ask YEAR "Erscheinungsjahr (optional)"
+  ask TMDBID "TMDB-ID (optional)"
 }
 
