@@ -20,7 +20,7 @@ need eject
 
 makemkv() { stdbuf -oL -eL makemkvcon "$@"; }
 
-# Listet aktive optische Laufwerke: "index\tdevice\tlabel"
+# Listet aktive optische Laufwerke: "index\tdevice\tlabel\tname"
 list_drives() {
   makemkv -r --cache=1 info disc:9999 2>/dev/null | python3 -c '
 import sys, csv
@@ -33,8 +33,26 @@ for raw in sys.stdin:
     name, label, dev = fields[4], fields[5], fields[6]
     if state == "256" or not dev:
         continue
-    print(f"{idx}\t{dev}\t{label}")
+    print(f"{idx}\t{dev}\t{label}\t{name}")
 '
+}
+
+# Kurze, sprechende Beschreibung einer Laufwerkszeile fuer die Auswahl.
+describe_drive() {
+  local row="$1" dev label name desc
+  dev="$(cut -f2 <<<"$row")"
+  label="$(cut -f3 <<<"$row")"
+  name="$(cut -f4 <<<"$row")"
+  desc="$dev"
+  [ -n "$name" ] && desc="$desc — $name"
+  if [ -n "$label" ]; then
+    desc="$desc (Disc eingelegt: \"$label\")"
+  elif [[ "$name" == *CDEmu* || "$name" == *virtual* ]]; then
+    desc="$desc (virtuelles Laufwerk, kein Medium)"
+  else
+    desc="$desc (kein Medium eingelegt)"
+  fi
+  echo "$desc"
 }
 
 TMP_ROOT="$(mktemp -d /tmp/dvd-auto.XXXXXX)"
@@ -53,27 +71,29 @@ if [ "${#DRIVES[@]}" -eq 0 ]; then
   exit 1
 fi
 
+CHOSEN_ROW=""
 if [ -n "$DRIVE" ]; then
   MK_INDEX=""
   for row in "${DRIVES[@]}"; do
     dev="$(cut -f2 <<<"$row")"
-    [ "$dev" = "$DRIVE" ] && MK_INDEX="$(cut -f1 <<<"$row")"
+    [ "$dev" = "$DRIVE" ] && { MK_INDEX="$(cut -f1 <<<"$row")"; CHOSEN_ROW="$row"; }
   done
   [ -z "$MK_INDEX" ] && { err "Laufwerk $DRIVE nicht gefunden."; exit 1; }
 elif [ "${#DRIVES[@]}" -eq 1 ]; then
-  MK_INDEX="$(cut -f1 <<<"${DRIVES[0]}")"
-  DRIVE="$(cut -f2 <<<"${DRIVES[0]}")"
+  CHOSEN_ROW="${DRIVES[0]}"
+  MK_INDEX="$(cut -f1 <<<"$CHOSEN_ROW")"
+  DRIVE="$(cut -f2 <<<"$CHOSEN_ROW")"
 else
   echo "Mehrere Laufwerke gefunden:"
   for i in "${!DRIVES[@]}"; do
-    printf "  [%d] %s\n" "$((i+1))" "$(cut -f2 <<<"${DRIVES[$i]}")"
+    printf "  [%d] %s\n" "$((i+1))" "$(describe_drive "${DRIVES[$i]}")"
   done
   read -rp "Welches Laufwerk verwenden? (Nummer): " DCHOICE
-  row="${DRIVES[$((DCHOICE-1))]}"
-  MK_INDEX="$(cut -f1 <<<"$row")"
-  DRIVE="$(cut -f2 <<<"$row")"
+  CHOSEN_ROW="${DRIVES[$((DCHOICE-1))]}"
+  MK_INDEX="$(cut -f1 <<<"$CHOSEN_ROW")"
+  DRIVE="$(cut -f2 <<<"$CHOSEN_ROW")"
 fi
-ok "Verwende Laufwerk: $DRIVE (MakeMKV disc:$MK_INDEX)"
+ok "Verwende Laufwerk: $(describe_drive "$CHOSEN_ROW")"
 echo
 
 # ---------- Auf Disc warten ----------
