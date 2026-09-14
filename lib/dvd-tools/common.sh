@@ -45,13 +45,25 @@ progress_bar() {
   [ "$filled" -gt "$width" ] && filled=$width
   [ "$filled" -lt 0 ] && filled=0
   local empty=$((width - filled))
-  printf "\r  ${C_GREEN}["
+  printf "\r\033[K  ${C_GREEN}["
   printf '%0.s#' $(seq 1 "$filled") 2>/dev/null
   printf "${C_RESET}${C_DIM}"
   printf '%0.s.' $(seq 1 "$empty") 2>/dev/null
   printf "${C_RESET}] %5.1f%%  %-40s" "$pct" "$label"
 }
 progress_done() { echo; }
+
+# Einzeiliger Spinner fuer Phasen ohne bekannten Prozentwert (z.B. Disc-Scan,
+# oder wenn die zugrundeliegende Kennzahl - hier MakeMKV-PRGV - gar nicht
+# geliefert wird). Nutzung: in einer Schleife wiederholt spinner_line "Text"
+SPINNER_FRAMES=(⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏)
+SPINNER_I=0
+spinner_line() {
+  local text="${1:-Arbeite...}"
+  local frame="${SPINNER_FRAMES[$((SPINNER_I % 10))]}"
+  SPINNER_I=$((SPINNER_I + 1))
+  printf "\r\033[K  ${C_CYAN}%s${C_RESET} %s" "$frame" "$text"
+}
 
 need() {
   command -v "$1" >/dev/null 2>&1 || { err "'$1' ist nicht installiert."; exit 1; }
@@ -269,8 +281,36 @@ identify_from_label() {
 # der tatsaechlich gemessenen Lesegeschwindigkeit (1x DVD = 1.32 MB/s).
 DVD_1X_BYTES_PER_SEC=1384448
 
-# makemkv_rip MK_INDEX RIP_DIR -> rippt mit Fortschrittsbalken, Rueckgabewert
-# ist der Exitcode von makemkvcon.
+# Letzte lesbare Statuszeile aus dem robot-mode-Log (PRGC- oder MSG-Text).
+latest_status() {
+  local log="$1"
+  tail -n 80 "$log" 2>/dev/null | python3 -c '
+import sys, csv
+text = ""
+for raw in sys.stdin:
+    raw = raw.strip()
+    if raw.startswith("PRGC:"):
+        try:
+            f = next(csv.reader([raw[5:]]))
+            if len(f) >= 3 and f[2]:
+                text = f[2]
+        except Exception:
+            pass
+    elif raw.startswith("MSG:"):
+        try:
+            f = next(csv.reader([raw[4:]]))
+            if len(f) >= 4 and f[3]:
+                text = f[3]
+        except Exception:
+            pass
+print(text)
+' 2>/dev/null
+}
+
+# makemkv_rip MK_INDEX RIP_DIR -> rippt mit Live-Anzeige, Rueckgabewert ist
+# der Exitcode von makemkvcon. Zeigt IMMER etwas an (Spinner+Status+Speed,
+# sobald Daten fliessen), unabhaengig davon, ob MakeMKV ueberhaupt PRGV-
+# Prozentzeilen liefert - manche Versionen tun das beim "mkv"-Befehl nicht.
 makemkv_rip() {
   local mk_index="$1" rip_dir="$2"
   local log; log="$(mktemp)"
@@ -278,7 +318,7 @@ makemkv_rip() {
     > "$log" 2>&1 &
   local pid=$!
 
-  local prev_bytes=0 prev_time cur_bytes cur_time dt db mbs xf pct_line pct
+  local prev_bytes=0 prev_time cur_bytes cur_time dt db mbs xf pct_line pct status label
   prev_time=$(date +%s.%N)
   while kill -0 "$pid" 2>/dev/null; do
     sleep 1
@@ -293,6 +333,8 @@ makemkv_rip() {
       printf "%.1f %.1f", mb, x
     }')"
 
+    status="$(latest_status "$log")"
+
     pct=""
     pct_line="$(grep -o 'PRGV:[0-9]*,[0-9]*,[0-9]*' "$log" | tail -1)"
     if [ -n "$pct_line" ]; then
@@ -301,7 +343,18 @@ makemkv_rip() {
         pct=$(awk -v t="$total" -v m="$max" 'BEGIN{printf "%.1f", t*100/m}')
       fi
     fi
-    [ -n "$pct" ] && progress_bar "$pct" "Rippen (MakeMKV)  ${mbs} MB/s (~${xf}x)"
+
+    label="Rippen (MakeMKV)"
+    [ -n "$status" ] && label="$label — $status"
+    if awk -v m="$mbs" 'BEGIN{exit !(m+0>0)}'; then
+      label="$label  ${mbs} MB/s (~${xf}x)"
+    fi
+
+    if [ -n "$pct" ]; then
+      progress_bar "$pct" "$label"
+    else
+      spinner_line "$label"
+    fi
 
     prev_bytes=$cur_bytes
     prev_time=$cur_time
