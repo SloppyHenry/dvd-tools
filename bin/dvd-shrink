@@ -6,6 +6,7 @@ set -euo pipefail
 # "readlink -f" gibt es unter macOS/BSD nicht - python3 (ohnehin Pflicht) als
 # portabler Ersatz.
 LIB_DIR="$(cd "$(dirname "$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$0")")/../lib/dvd-tools" && pwd)"
+# shellcheck source=lib/dvd-tools/common.sh
 source "$LIB_DIR/common.sh"
 
 DIR="${1:-${DVD_TOOLS_OUTPUT_DIR:-$PWD}}"

@@ -8,6 +8,7 @@ export LC_NUMERIC=C
 
 # Optionale Konfiguration (z.B. TMDB_API_KEY=...) aus ~/.config/dvd-tools/config laden.
 DVD_TOOLS_CONFIG="${DVD_TOOLS_CONFIG:-$HOME/.config/dvd-tools/config}"
+# shellcheck disable=SC1090  # echter Laufzeitpfad (Nutzer-Config), fuer shellcheck nicht auflösbar
 [ -f "$DVD_TOOLS_CONFIG" ] && source "$DVD_TOOLS_CONFIG"
 
 # ---------- Plattform-Abstraktion (Linux/Debian und macOS) ----------
@@ -211,21 +212,42 @@ build_basename() {
   local title="$1" year="$2" tmdbid="$3" base="$1"
   [ -n "$year" ] && base="${base} (${year})"
   [ -n "$tmdbid" ] && base="${base} [tmdbid-${tmdbid}]"
-  echo "$base" | tr -d '/\\:*?"<>|'
+  # Dateisystem-verbotene Zeichen durch Leerzeichen ersetzen statt loeschen
+  # (sonst wuerde z.B. "AC/DC" zu "ACDC" verschmelzen), danach doppelte
+  # Leerzeichen zusammenziehen und am Rand trimmen.
+  echo "$base" | tr '/\\:*?"<>|' ' ' | tr -s ' ' | sed -E 's/^ +| +$//g'
 }
 
 # write_tags_xml TITLE YEAR OUTFILE
+# xml_escape TEXT -> XML-sichere Version (Titel wie "Fast & Furious" wuerden
+# sonst die Tags-XML unbrauchbar machen).
+xml_escape() {
+  local s="$1"
+  # "\&" im Replacement ist Pflicht: bash behandelt ein unmaskiertes "&" in
+  # ${var//pattern/replacement} als Backreferenz auf den getroffenen Text
+  # (wie bei sed) - ohne die Maskierung wuerde sich das Escaping selbst
+  # kaputtmachen (z.B. "<" -> "<lt;" statt "&lt;").
+  s="${s//&/\&amp;}"
+  s="${s//</\&lt;}"
+  s="${s//>/\&gt;}"
+  s="${s//\"/\&quot;}"
+  s="${s//\'/\&apos;}"
+  printf '%s' "$s"
+}
+
 write_tags_xml() {
   local title="$1" year="$2" outfile="$3"
+  local title_esc; title_esc="$(xml_escape "$title")"
+  local year_esc; year_esc="$(xml_escape "$year")"
   {
     echo '<?xml version="1.0" encoding="UTF-8"?>'
     echo '<!DOCTYPE Tags SYSTEM "matroskatags.dtd">'
     echo '<Tags>'
     echo '  <Tag>'
     echo '    <Targets><TargetTypeValue>50</TargetTypeValue></Targets>'
-    echo "    <Simple><Name>TITLE</Name><String>${title}</String></Simple>"
+    echo "    <Simple><Name>TITLE</Name><String>${title_esc}</String></Simple>"
     if [ -n "$year" ]; then
-      echo "    <Simple><Name>DATE_RELEASED</Name><String>${year}</String></Simple>"
+      echo "    <Simple><Name>DATE_RELEASED</Name><String>${year_esc}</String></Simple>"
     fi
     echo '  </Tag>'
     echo '</Tags>'
@@ -354,6 +376,7 @@ PY
 
 # identify_from_label LABEL -> fragt bei Bedarf interaktiv nach, setzt danach
 # die globalen Variablen TITLE, YEAR, TMDBID.
+# shellcheck disable=SC2034  # YEAR/TMDBID sind absichtlich globale Ausgabe an den Aufrufer
 identify_from_label() {
   local label="$1"
   local guess; guess="$(clean_disc_label "$label")"
@@ -378,7 +401,7 @@ identify_from_label() {
     top_year="$(cut -f3 <<<"${CANDIDATES[0]}")"
     sim="$(similarity "$guess" "$top_title")"
 
-    if python3 -c "import sys; sys.exit(0 if float('$sim') >= 0.72 else 1)"; then
+    if python3 -c "import sys; sys.exit(0 if float(sys.argv[1]) >= 0.72 else 1)" "$sim"; then
       ok "Erkannt: $top_title ($top_year) [tmdbid-$top_id]"
       read -rp "Uebernehmen? (J/n): " CONFIRM_GUESS
       if ! [[ "$CONFIRM_GUESS" =~ ^[nN]$ ]]; then

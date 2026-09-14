@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Syntaxcheck (bash -n)
+        run: |
+          for f in bin/dvd-auto bin/dvd-shrink lib/dvd-tools/common.sh install.sh tests/run.sh; do
+            echo "== $f =="
+            bash -n "$f"
+          done
+
+      - name: ShellCheck
+        uses: ludeeus/action-shellcheck@master
+        with:
+          scandir: '.'
+          additional_files: 'bin/dvd-auto bin/dvd-shrink'
+          severity: warning
+
+      - name: Regressionstests
+        run: tests/run.sh

@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "f=$(python3 -c 'import json,sys\ntry:\n    d=json.load(sys.stdin)\n    print(d.get(\"tool_input\",{}).get(\"file_path\",\"\"))\nexcept Exception:\n    print(\"\")' 2>/dev/null); case \"$f\" in *.sh|*/bin/dvd-auto|*/bin/dvd-shrink) bash -n \"$f\" && command -v shellcheck >/dev/null 2>&1 && shellcheck --severity=warning \"$f\" ;; *) exit 0 ;; esac"
+          }
+        ]
+      }
+    ]
+  }
+}
